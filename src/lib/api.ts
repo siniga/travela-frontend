@@ -52,6 +52,73 @@ export type ApiResult = {
   body: unknown;
 };
 
+export function apiErrorMessage(body: unknown, fallback: string): string {
+  if (body && typeof body === "object") {
+    const b = body as { message?: unknown; errors?: Record<string, string[]> };
+    if (typeof b.message === "string") return b.message;
+    if (b.errors && typeof b.errors === "object") {
+      const first = Object.values(b.errors).flat()[0];
+      if (typeof first === "string") return first;
+    }
+  }
+  return fallback;
+}
+
+export function extractAuthTokenFromBody(body: unknown): string | null {
+  if (!body || typeof body !== "object") return null;
+  const b = body as Record<string, unknown>;
+  if (typeof b.token === "string") return b.token;
+  if (typeof b.access_token === "string") return b.access_token;
+  const data = b.data;
+  if (data && typeof data === "object") {
+    const d = data as Record<string, unknown>;
+    if (typeof d.token === "string") return d.token;
+    if (typeof d.access_token === "string") return d.access_token;
+  }
+  return null;
+}
+
+export type AuthUserPayload = {
+  id?: number | string;
+  name?: string;
+  email?: string;
+};
+
+export function extractUserFromAuthBody(body: unknown): AuthUserPayload | null {
+  if (!body || typeof body !== "object") return null;
+  const b = body as Record<string, unknown>;
+
+  const fromRecord = (record: Record<string, unknown>): AuthUserPayload | null => {
+    const id = record.id;
+    const name = record.name;
+    const email = record.email;
+    if (id == null && name == null && email == null) return null;
+    return {
+      id: typeof id === "number" || typeof id === "string" ? id : undefined,
+      name: typeof name === "string" ? name : undefined,
+      email: typeof email === "string" ? email : undefined,
+    };
+  };
+
+  if (b.user && typeof b.user === "object") {
+    const parsed = fromRecord(b.user as Record<string, unknown>);
+    if (parsed) return parsed;
+  }
+
+  const data = b.data;
+  if (data && typeof data === "object") {
+    const d = data as Record<string, unknown>;
+    if (d.user && typeof d.user === "object") {
+      const parsed = fromRecord(d.user as Record<string, unknown>);
+      if (parsed) return parsed;
+    }
+    const parsed = fromRecord(d);
+    if (parsed) return parsed;
+  }
+
+  return fromRecord(b);
+}
+
 export const CountriesApi = {
   // TODO: GET /countries
   list: async () => ({ data: [] }),
@@ -83,8 +150,19 @@ export const AuthApi = {
     const body = await parseResponseBody(res);
     return { ok: res.ok, status: res.status, body };
   },
-  // TODO: POST /login
-  login: async (_data: unknown) => ({ data: {} }),
+  /** POST /auth/login — body: { email, password } */
+  login: async (data: { email: string; password: string }): Promise<ApiResult> => {
+    const res = await fetch(`${PUBLIC_API_BASE}/auth/login`, {
+      method: "POST",
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(data),
+    });
+    const body = await parseResponseBody(res);
+    return { ok: res.ok, status: res.status, body };
+  },
   /** POST /auth/verify-email — body: { email, code } */
   verifyEmail: async (data: { email: string; code: string }): Promise<ApiResult> => {
     const res = await fetch(`${PUBLIC_API_BASE}/auth/verify-email`, {

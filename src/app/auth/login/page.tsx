@@ -37,8 +37,12 @@ function LoginContent() {
       await login(email, password);
       router.replace(redirect);
     } catch (err: unknown) {
-      const e = err as { response?: { data?: { message?: string } } };
-      setError(e?.response?.data?.message ?? 'Invalid email or password.');
+      const e = err as { response?: { data?: { message?: string } }; message?: string };
+      setError(
+        e?.response?.data?.message ??
+          (err instanceof Error ? err.message : undefined) ??
+          'Invalid email or password.'
+      );
     } finally {
       setLoading(false);
     }

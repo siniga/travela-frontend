@@ -1,5 +1,11 @@
 'use client';
 
+import {
+  apiErrorMessage,
+  AuthApi,
+  extractAuthTokenFromBody,
+  extractUserFromAuthBody,
+} from '@/lib/api';
 import React, {
   createContext,
   useCallback,
@@ -27,7 +33,10 @@ interface AuthContextValue {
 
 const AuthContext = createContext<AuthContextValue | null>(null);
 
-// Simulated delay to mimic a real network request
+/** Dispatched when auth keys in localStorage change in the same tab. */
+export const AUTH_STORAGE_SYNC = 'travela-auth-storage-sync';
+
+// Simulated delay to mimic a real network request (register only)
 const delay = (ms = 800) => new Promise((r) => setTimeout(r, ms));
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
@@ -46,6 +55,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return localStorage.getItem('token');
   });
   const [isLoading, setIsLoading] = useState(true);
+
+  const persistSession = useCallback((authToken: string, authUser: User) => {
+    localStorage.setItem('token', authToken);
+    localStorage.setItem('user', JSON.stringify(authUser));
+    setToken(authToken);
+    setUser(authUser);
+    window.dispatchEvent(new Event(AUTH_STORAGE_SYNC));
+  }, []);
 
   useEffect(() => {
     const syncFromStorage = () => {
@@ -66,34 +83,53 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     syncFromStorage();
 
-    // Keep auth state in sync if storage is modified elsewhere.
     const onStorage = (e: StorageEvent) => {
       if (e.key === 'token' || e.key === 'user' || e.key === null) {
         syncFromStorage();
       }
     };
+    const onAuthSync = () => syncFromStorage();
+
     window.addEventListener('storage', onStorage);
+    window.addEventListener(AUTH_STORAGE_SYNC, onAuthSync);
     setIsLoading(false);
 
     return () => {
       window.removeEventListener('storage', onStorage);
+      window.removeEventListener(AUTH_STORAGE_SYNC, onAuthSync);
     };
   }, []);
 
-  const login = useCallback(async (email: string, _password: string) => {
-    await delay();
-    // Simulate successful login — replace with real API when backend is ready
-    const mockToken = `mock_token_${Date.now()}`;
-    const mockUser: User = {
-      id: 1,
-      name: email.split('@')[0].replace(/[._]/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase()),
-      email,
-    };
-    localStorage.setItem('token', mockToken);
-    localStorage.setItem('user', JSON.stringify(mockUser));
-    setToken(mockToken);
-    setUser(mockUser);
-  }, []);
+  const login = useCallback(
+    async (email: string, password: string) => {
+      const trimmedEmail = email.trim();
+      const result = await AuthApi.login({
+        email: trimmedEmail,
+        password,
+      });
+
+      if (!result.ok) {
+        throw new Error(
+          apiErrorMessage(result.body, 'Invalid email or password.')
+        );
+      }
+
+      const authToken = extractAuthTokenFromBody(result.body);
+      if (!authToken) {
+        throw new Error('Login succeeded but no access token was returned.');
+      }
+
+      const apiUser = extractUserFromAuthBody(result.body);
+      const authUser: User = {
+        id: apiUser?.id,
+        name: apiUser?.name,
+        email: apiUser?.email ?? trimmedEmail,
+      };
+
+      persistSession(authToken, authUser);
+    },
+    [persistSession]
+  );
 
   const register = useCallback(async (data: Record<string, unknown>) => {
     await delay();
@@ -101,14 +137,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const mockToken = `mock_token_${Date.now()}`;
     const mockUser: User = {
       id: 1,
-      name: data.name as string ?? 'Traveller',
-      email: data.email as string ?? '',
+      name: (data.name as string) ?? 'Traveller',
+      email: (data.email as string) ?? '',
     };
-    localStorage.setItem('token', mockToken);
-    localStorage.setItem('user', JSON.stringify(mockUser));
-    setToken(mockToken);
-    setUser(mockUser);
-  }, []);
+    persistSession(mockToken, mockUser);
+  }, [persistSession]);
 
   const logout = useCallback(() => {
     localStorage.removeItem('token');
@@ -117,6 +150,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     localStorage.removeItem('pendingExternalPayment');
     setToken(null);
     setUser(null);
+    window.dispatchEvent(new Event(AUTH_STORAGE_SYNC));
   }, []);
 
   return (

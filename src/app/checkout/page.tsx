@@ -18,7 +18,8 @@ import Image from 'next/image';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
-import { AuthApi, OrderApi } from '@/lib/api';
+import { AuthApi, extractAuthTokenFromBody, OrderApi } from '@/lib/api';
+import { AUTH_STORAGE_SYNC } from '@/lib/auth-context';
 
 interface CartItem {
   bundle: {
@@ -249,6 +250,7 @@ export default function CheckoutPage() {
         'user',
         JSON.stringify({ email: trimmedEmail, name: trimmedName, id: userId })
       );
+      window.dispatchEvent(new Event(AUTH_STORAGE_SYNC));
       setEmail(trimmedEmail);
       setFullName(trimmedName);
 
@@ -435,20 +437,6 @@ export default function CheckoutPage() {
       if (typeof u.id === 'string' && /^\d+$/.test(u.id)) return Number(u.id);
     } catch {
       // ignore
-    }
-    return null;
-  };
-
-  const extractAuthTokenFromBody = (body: unknown): string | null => {
-    if (!body || typeof body !== 'object') return null;
-    const b = body as Record<string, unknown>;
-    if (typeof b.token === 'string') return b.token;
-    if (typeof b.access_token === 'string') return b.access_token;
-    const data = b.data;
-    if (data && typeof data === 'object') {
-      const d = data as Record<string, unknown>;
-      if (typeof d.token === 'string') return d.token;
-      if (typeof d.access_token === 'string') return d.access_token;
     }
     return null;
   };
