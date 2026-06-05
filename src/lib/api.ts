@@ -1,14 +1,13 @@
 /**
  * API client for Travela backend.
  *
- * Override with NEXT_PUBLIC_BASE_URL (no trailing slash), e.g. for local Laravel:
- *   NEXT_PUBLIC_BASE_URL=http://127.0.0.1:8000/api
+ * Override with NEXT_PUBLIC_BASE_URL (no trailing slash) if needed.
  */
 
 const PUBLIC_API_BASE =
   process.env.NEXT_PUBLIC_BASE_URL?.replace(/\/+$/, "") ??
   process.env.NEXT_PUBLIC_API_URL?.replace(/\/+$/, "") ??
-  "http://127.0.0.1:8000/api";
+  "https://api.thetravela.com/api";
 
 function getBearerToken(): string | null {
   if (typeof window === "undefined") return null;
