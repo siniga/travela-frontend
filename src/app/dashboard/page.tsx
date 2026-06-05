@@ -1,6 +1,12 @@
 'use client';
 
-import { EsimsApi } from '@/lib/api';
+import {
+  apiErrorMessage,
+  BundlesApi,
+  EsimsApi,
+  type EsimAssignmentPayload,
+  type EsimAssignmentStatus,
+} from '@/lib/api';
 import { useAuth } from '@/lib/auth-context';
 import {
   CheckCircle,
@@ -8,10 +14,12 @@ import {
   Globe,
   Info,
   Loader2,
-  RefreshCw,
+  Package,
   Smartphone,
+  Wifi,
+  X,
+  Zap,
 } from 'lucide-react';
-import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useState } from 'react';
 
@@ -45,7 +53,67 @@ interface EsimDetail {
   iccid?: string | null;
   description?: string | null;
   status?: string | null;
+  sim_type?: string | null;
+  provider_status?: string | null;
 }
+
+interface BundleDetail {
+  id?: number;
+  name?: string | null;
+  alias?: string | null;
+  data_mb?: number | null;
+  validity_days?: number | null;
+  duration_days?: number | null;
+  duration?: string | null;
+}
+
+interface EsimsListResponse {
+  esims: UserEsimRecord[];
+  latestOrderBundle: BundleDetail | null;
+}
+
+interface OrderItemDetail {
+  id?: number;
+  data_amount?: number | null;
+  bundle_name?: string | null;
+  validity_days?: number | null;
+}
+
+interface OrderDetail {
+  metadata?: {
+    country?: string;
+    countryName?: string;
+    simType?: string;
+  };
+}
+
+interface TopUpBundle {
+  id: string | number;
+  sim_bundle_id?: number | null;
+  name: string;
+  data_mb?: number;
+  validity_days?: number;
+  price?: string | number;
+  currency?: string;
+  description?: string;
+  tagline?: string;
+}
+
+type ApiBundle = {
+  id: number;
+  sim_bundle_id?: number | null;
+  name: string;
+  alias?: string | null;
+  validity_days?: number | null;
+  price?: string | number | null;
+  currency?: string | null;
+  data_mb?: number | null;
+  bundle_size?: string | number | null;
+  bundle_size_in_mb?: number | null;
+  unit?: string | null;
+};
+
+type BundlesResponse = { bundles: ApiBundle[] };
 
 interface UserEsimRecord {
   id: number;
@@ -55,20 +123,105 @@ interface UserEsimRecord {
   balance_fetched_at?: string | null;
   created_at?: string | null;
   esim?: EsimDetail | null;
+  bundle?: BundleDetail | null;
+  order_item?: OrderItemDetail | null;
+  order?: OrderDetail | null;
 }
 
-function formatMb(mb?: number) {
-  if (!mb) return '0 MB';
-  return mb >= 1024 ? `${(mb / 1024).toFixed(1)} GB` : `${mb} MB`;
+const DEFAULT_RETRY_SECONDS = 300;
+const TOPUP_MODAL_TRANSITION_MS = 320;
+const CHECKOUT_TRANSITION_KEY = 'travela:checkout-transition';
+
+type WatcherSignal = {
+  cancelled: boolean;
+  timeoutId?: number;
+};
+
+function sleep(ms: number, signal: WatcherSignal) {
+  return new Promise<void>((resolve) => {
+    if (signal.cancelled) {
+      resolve();
+      return;
+    }
+    signal.timeoutId = window.setTimeout(() => resolve(), ms);
+  });
 }
 
-function formatBalance(amount?: string | null, currency?: string | null) {
-  if (amount == null || amount === '') return '—';
-  const num = Number(amount);
-  const formatted = Number.isFinite(num)
-    ? num.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 2 })
-    : amount;
-  return currency ? `${formatted} ${currency}` : formatted;
+function coerceNumber(value: unknown): number | undefined {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value === 'string' && value.trim() !== '') {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return undefined;
+}
+
+function normalizeBundle(raw: unknown): BundleDetail | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const b = raw as Record<string, unknown>;
+  const data_mb = coerceNumber(b.data_mb);
+  const validity_days = coerceNumber(b.validity_days) ?? coerceNumber(b.duration_days);
+  return {
+    id: coerceNumber(b.id),
+    name: typeof b.name === 'string' ? b.name : null,
+    alias: typeof b.alias === 'string' ? b.alias : null,
+    data_mb: data_mb ?? null,
+    validity_days: validity_days ?? null,
+    duration_days: coerceNumber(b.duration_days) ?? null,
+    duration: typeof b.duration === 'string' ? b.duration : null,
+  };
+}
+
+function formatMb(mb?: number | null) {
+  if (mb == null || mb <= 0) return '—';
+  return `${mb.toLocaleString()} MB`;
+}
+
+function bundleToMb(bundle: ApiBundle): number | undefined {
+  const direct = coerceNumber(bundle.data_mb);
+  if (direct != null && direct > 0) return direct;
+
+  const sizeInMb = coerceNumber(bundle.bundle_size_in_mb);
+  if (sizeInMb != null && sizeInMb > 0) return sizeInMb;
+
+  const size = coerceNumber(bundle.bundle_size);
+  if (size == null) return undefined;
+
+  const unit = (bundle.unit ?? '').toUpperCase();
+  if (unit === 'GB') return Math.round(size * 1024);
+  if (unit === 'MB') return Math.round(size);
+  return undefined;
+}
+
+function resolveBundleDataMb(
+  userBundle?: BundleDetail | null,
+  latestOrderBundle?: BundleDetail | null,
+  assignedBundle?: EsimAssignmentPayload['bundle'],
+  purchaseBundle?: { data_mb?: number },
+  orderItemDataAmount?: number | null
+): number | undefined {
+  const fromUser = coerceNumber(userBundle?.data_mb);
+  if (fromUser != null && fromUser > 0) return fromUser;
+
+  const fromLatestOrder = coerceNumber(latestOrderBundle?.data_mb);
+  if (fromLatestOrder != null && fromLatestOrder > 0) return fromLatestOrder;
+
+  const fromAssigned = coerceNumber(assignedBundle?.data_mb);
+  if (fromAssigned != null && fromAssigned > 0) return fromAssigned;
+
+  const fromPurchase = coerceNumber(purchaseBundle?.data_mb);
+  if (fromPurchase != null && fromPurchase > 0) return fromPurchase;
+
+  const fromOrderItem = coerceNumber(orderItemDataAmount);
+  if (fromOrderItem != null && fromOrderItem > 0) return fromOrderItem;
+
+  return undefined;
+}
+
+/** Balance area shows bundle data allowance (data_mb) first. */
+function displayDataBalance(bundleDataMb?: number) {
+  if (bundleDataMb != null && bundleDataMb > 0) return formatMb(bundleDataMb);
+  return '—';
 }
 
 function formatTripDate(iso?: string | null) {
@@ -82,18 +235,95 @@ function formatTripDate(iso?: string | null) {
   });
 }
 
-function parseEsimsFromBody(body: unknown): UserEsimRecord[] {
-  if (!body || typeof body !== 'object') return [];
-  const b = body as { data?: unknown; success?: boolean };
-  if (!Array.isArray(b.data)) return [];
-  return b.data as UserEsimRecord[];
+function parseEsimsFromBody(body: unknown): EsimsListResponse {
+  if (!body || typeof body !== 'object') {
+    return { esims: [], latestOrderBundle: null };
+  }
+
+  const b = body as { data?: unknown; latest_order?: unknown };
+  const esims: UserEsimRecord[] = Array.isArray(b.data)
+    ? b.data
+        .filter((item): item is Record<string, unknown> => !!item && typeof item === 'object')
+        .map((record) => ({
+          ...(record as unknown as UserEsimRecord),
+          bundle: normalizeBundle(record.bundle),
+        }))
+    : [];
+
+  let latestOrderBundle: BundleDetail | null = null;
+  if (b.latest_order && typeof b.latest_order === 'object') {
+    const latestOrder = b.latest_order as Record<string, unknown>;
+    latestOrderBundle = normalizeBundle(latestOrder.bundle);
+  }
+
+  return { esims, latestOrderBundle };
 }
 
-function esimStatusLabel(status?: string | null) {
-  if (!status) return 'ACTIVE';
-  const s = status.toUpperCase();
-  if (s === 'MANAGED' || s === 'ACTIVE') return 'ACTIVE';
-  return status.replace(/_/g, ' ');
+function parseAssignmentStatus(body: unknown): EsimAssignmentStatus {
+  if (!body || typeof body !== 'object') {
+    return { has_sim: false };
+  }
+
+  const root = body as Record<string, unknown>;
+  const source =
+    root.has_sim != null || root.status != null
+      ? root
+      : root.data && typeof root.data === 'object'
+        ? (root.data as Record<string, unknown>)
+        : root;
+
+  const has_sim = source.has_sim === true;
+  const status = typeof source.status === 'string' ? source.status : undefined;
+  const retry_after_seconds =
+    typeof source.retry_after_seconds === 'number'
+      ? source.retry_after_seconds
+      : undefined;
+
+  let inventory: EsimAssignmentStatus['inventory'];
+  if (source.inventory && typeof source.inventory === 'object') {
+    const inv = source.inventory as Record<string, unknown>;
+    inventory = {
+      available: typeof inv.available === 'number' ? inv.available : undefined,
+    };
+  }
+
+  let data: EsimAssignmentPayload | undefined;
+  if (source.data && typeof source.data === 'object') {
+    const d = source.data as Record<string, unknown>;
+    const esim =
+      d.esim && typeof d.esim === 'object' ? (d.esim as EsimAssignmentPayload['esim']) : undefined;
+    const bundle =
+      d.bundle && typeof d.bundle === 'object'
+        ? (d.bundle as EsimAssignmentPayload['bundle'])
+        : undefined;
+    if (esim || bundle) data = { esim, bundle };
+  }
+
+  return { has_sim, status, retry_after_seconds, inventory, data };
+}
+
+function shouldPollAssignment(status: EsimAssignmentStatus): boolean {
+  if (status.has_sim) return false;
+  return status.status === 'waiting_for_inventory';
+}
+
+function simTypeLabel(simType?: string | null) {
+  const normalized = (simType ?? 'esim').toLowerCase();
+  if (normalized === 'physical') return 'Physical SIM Card';
+  return 'eSIM';
+}
+
+function isSimActive(status?: string | null) {
+  return (status ?? '').toUpperCase() === 'MANAGED';
+}
+
+function simStatusLabel(status?: string | null) {
+  return isSimActive(status) ? 'Active' : 'Inactive';
+}
+
+function formatMsisdn(msisdn?: string | null) {
+  if (!msisdn) return null;
+  return msisdn.startsWith('+') ? msisdn : `+${msisdn}`;
 }
 
 export default function DashboardPage() {
@@ -101,10 +331,19 @@ export default function DashboardPage() {
   const router = useRouter();
   const [purchase, setPurchase] = useState<PurchaseData | null>(null);
   const [userEsims, setUserEsims] = useState<UserEsimRecord[]>([]);
-  const [esimsLoading, setEsimsLoading] = useState(false);
+  const [latestOrderBundle, setLatestOrderBundle] = useState<BundleDetail | null>(null);
+  const [assignedSim, setAssignedSim] = useState<EsimAssignmentPayload | null>(null);
+  const [assignmentLoading, setAssignmentLoading] = useState(true);
+  const [waitingForSim, setWaitingForSim] = useState(false);
   const [esimsError, setEsimsError] = useState('');
+  const [activating, setActivating] = useState(false);
+  const [topUpModalOpen, setTopUpModalOpen] = useState(false);
+  const [topUpModalShown, setTopUpModalShown] = useState(false);
+  const [topUpModalClosing, setTopUpModalClosing] = useState(false);
+  const [topUpBundles, setTopUpBundles] = useState<TopUpBundle[]>([]);
+  const [topUpBundlesLoading, setTopUpBundlesLoading] = useState(false);
+
   const loadEsims = useCallback(async () => {
-    setEsimsLoading(true);
     setEsimsError('');
     try {
       const res = await EsimsApi.listMine();
@@ -117,18 +356,142 @@ export default function DashboardPage() {
             : `Could not load eSIMs (HTTP ${res.status}).`;
         setEsimsError(msg);
         setUserEsims([]);
+        setLatestOrderBundle(null);
         return;
       }
-      setUserEsims(parseEsimsFromBody(res.body));
+      const parsed = parseEsimsFromBody(res.body);
+      setUserEsims(parsed.esims);
+      setLatestOrderBundle(parsed.latestOrderBundle);
     } catch (e: unknown) {
       const fallback =
         e instanceof Error ? e.message : typeof e === 'string' ? e : String(e);
       setEsimsError(fallback || 'Failed to load eSIM details.');
       setUserEsims([]);
-    } finally {
-      setEsimsLoading(false);
+      setLatestOrderBundle(null);
     }
   }, []);
+
+  const applyAssignedSim = useCallback(
+    (payload: EsimAssignmentPayload | undefined) => {
+      if (payload) setAssignedSim(payload);
+    },
+    []
+  );
+
+  const handleActivateSim = useCallback(async (userEsimId: number) => {
+    setActivating(true);
+    setEsimsError('');
+    try {
+      const res = await EsimsApi.activate(userEsimId);
+      if (!res.ok) {
+        setEsimsError(apiErrorMessage(res.body, `Activation failed (HTTP ${res.status}).`));
+        return;
+      }
+      await loadEsims();
+    } catch (e: unknown) {
+      const fallback =
+        e instanceof Error ? e.message : typeof e === 'string' ? e : String(e);
+      setEsimsError(fallback || 'Activation failed.');
+    } finally {
+      setActivating(false);
+    }
+  }, [loadEsims]);
+
+  useEffect(() => {
+    if (!topUpModalOpen) return;
+
+    let cancelled = false;
+    setTopUpBundlesLoading(true);
+
+    (async () => {
+      try {
+        const res = await BundlesApi.list<BundlesResponse>();
+        const apiBundles = res.data?.bundles ?? [];
+        const uiBundles: TopUpBundle[] = apiBundles.map((b) => ({
+          id: b.id,
+          sim_bundle_id: b.sim_bundle_id ?? null,
+          name: b.alias?.trim() || b.name,
+          data_mb: bundleToMb(b),
+          validity_days: b.validity_days ?? undefined,
+          price: b.price ?? undefined,
+          currency: b.currency ?? undefined,
+          tagline: b.name,
+        }));
+        if (!cancelled) setTopUpBundles(uiBundles);
+      } catch {
+        if (!cancelled) setTopUpBundles([]);
+      } finally {
+        if (!cancelled) setTopUpBundlesLoading(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [topUpModalOpen]);
+
+  const closeTopUpModal = useCallback((onClosed?: () => void) => {
+    if (topUpModalClosing) return;
+    setTopUpModalClosing(true);
+    window.setTimeout(() => {
+      setTopUpModalOpen(false);
+      setTopUpModalClosing(false);
+      setTopUpModalShown(false);
+      onClosed?.();
+    }, TOPUP_MODAL_TRANSITION_MS);
+  }, [topUpModalClosing]);
+
+  useEffect(() => {
+    if (!topUpModalOpen) return;
+    setTopUpModalShown(false);
+    const id = requestAnimationFrame(() => {
+      requestAnimationFrame(() => setTopUpModalShown(true));
+    });
+    return () => cancelAnimationFrame(id);
+  }, [topUpModalOpen]);
+
+  useEffect(() => {
+    if (!topUpModalOpen) return;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') closeTopUpModal();
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener('keydown', onKeyDown);
+    };
+  }, [topUpModalOpen, closeTopUpModal]);
+
+  const handleTopUpPurchase = useCallback(
+    (bundle: TopUpBundle) => {
+      if (topUpModalClosing) return;
+
+      const activeEsim = userEsims[0] ?? null;
+      const country = activeEsim?.order?.metadata?.country ?? 'TZ';
+      const countryName =
+        activeEsim?.order?.metadata?.countryName ??
+        purchase?.trip?.countryName ??
+        'Tanzania';
+      const simType =
+        activeEsim?.esim?.sim_type === 'physical' ? 'physical' : 'esim';
+
+      localStorage.setItem(
+        'cart',
+        JSON.stringify({
+          items: [{ bundle, quantity: 1 }],
+          country,
+          countryName,
+          simType,
+          checkoutMode: 'topup',
+        })
+      );
+      sessionStorage.setItem(CHECKOUT_TRANSITION_KEY, 'topup-modal');
+      closeTopUpModal(() => router.push('/checkout'));
+    },
+    [userEsims, purchase, router, topUpModalClosing, closeTopUpModal]
+  );
 
   useEffect(() => {
     if (!isLoading && !isAuthenticated) {
@@ -151,8 +514,84 @@ export default function DashboardPage() {
 
   useEffect(() => {
     if (!isAuthenticated) return;
-    loadEsims();
-  }, [isAuthenticated, loadEsims]);
+
+    const signal: WatcherSignal = { cancelled: false };
+
+    async function dashboardSimWatcher() {
+      setAssignmentLoading(true);
+      setWaitingForSim(false);
+
+      try {
+        while (!signal.cancelled) {
+          const statusRes = await EsimsApi.assignmentStatus();
+          if (signal.cancelled) return;
+
+          if (!statusRes.ok) {
+            const msg =
+              statusRes.body &&
+              typeof statusRes.body === 'object' &&
+              typeof (statusRes.body as { message?: unknown }).message === 'string'
+                ? String((statusRes.body as { message: string }).message)
+                : `Could not check SIM assignment (HTTP ${statusRes.status}).`;
+            setEsimsError(msg);
+            setAssignmentLoading(false);
+            return;
+          }
+
+          const status = parseAssignmentStatus(statusRes.body);
+
+          if (status.has_sim) {
+            applyAssignedSim(status.data);
+            setWaitingForSim(false);
+            await loadEsims();
+            setAssignmentLoading(false);
+            return;
+          }
+
+          if (shouldPollAssignment(status)) {
+            setWaitingForSim(true);
+          } else {
+            setWaitingForSim(false);
+            await loadEsims();
+            setAssignmentLoading(false);
+            return;
+          }
+
+          if ((status.inventory?.available ?? 0) > 0) {
+            const assignRes = await EsimsApi.register();
+            if (signal.cancelled) return;
+
+            if (assignRes.ok || assignRes.status === 201) {
+              const assign = parseAssignmentStatus(assignRes.body);
+              if (assign.has_sim) {
+                applyAssignedSim(assign.data);
+                setWaitingForSim(false);
+                await loadEsims();
+                setAssignmentLoading(false);
+                return;
+              }
+            }
+          }
+
+          const delayMs = (status.retry_after_seconds ?? DEFAULT_RETRY_SECONDS) * 1000;
+          await sleep(delayMs, signal);
+        }
+      } catch (e: unknown) {
+        if (signal.cancelled) return;
+        const fallback =
+          e instanceof Error ? e.message : typeof e === 'string' ? e : String(e);
+        setEsimsError(fallback || 'Failed to check SIM assignment.');
+        setAssignmentLoading(false);
+      }
+    }
+
+    void dashboardSimWatcher();
+
+    return () => {
+      signal.cancelled = true;
+      if (signal.timeoutId) window.clearTimeout(signal.timeoutId);
+    };
+  }, [isAuthenticated, applyAssignedSim, loadEsims]);
 
   if (isLoading || !isAuthenticated) {
     return (
@@ -164,39 +603,167 @@ export default function DashboardPage() {
 
   const primaryUserEsim = userEsims[0] ?? null;
   const primaryBundle = purchase?.items?.[0]?.bundle;
-  const totalEsims = userEsims.length > 0
-    ? userEsims.length
-    : (purchase?.items?.reduce((s, c) => s + c.quantity, 0) ?? 0);
+  const apiBundle = primaryUserEsim?.bundle ?? latestOrderBundle ?? null;
+  const orderItemDataAmount = coerceNumber(primaryUserEsim?.order_item?.data_amount);
 
-  const headlineData = primaryBundle?.data_mb
-    ? formatMb(primaryBundle.data_mb)
-    : formatBalance(primaryUserEsim?.balance, primaryUserEsim?.balance_currency);
+  const assignedMsisdn =
+    assignedSim?.esim?.msisdn ?? primaryUserEsim?.esim?.msisdn ?? null;
+  const assignedBundleName =
+    apiBundle?.alias ??
+    apiBundle?.name ??
+    assignedSim?.bundle?.name ??
+    primaryBundle?.name ??
+    primaryUserEsim?.esim?.description ??
+    null;
+  const assignedBundleDuration =
+    apiBundle?.duration ??
+    (apiBundle?.validity_days ? `${apiBundle.validity_days} days` : null) ??
+    assignedSim?.bundle?.duration ??
+    (primaryBundle?.validity_days ? `${primaryBundle.validity_days} days` : null);
+  const bundleDataMb = resolveBundleDataMb(
+    primaryUserEsim?.bundle,
+    latestOrderBundle,
+    assignedSim?.bundle,
+    primaryBundle,
+    orderItemDataAmount
+  );
+
+  const simType = primaryUserEsim?.esim?.sim_type ?? assignedSim?.esim?.sim_type ?? 'esim';
+  const simStatus = primaryUserEsim?.esim?.status ?? assignedSim?.esim?.status ?? null;
+  const simIsActive = isSimActive(simStatus);
+  const simTypeTitle = simTypeLabel(simType);
+  const isEsimType = simType.toLowerCase() !== 'physical';
+
+  const hasActiveEsim =
+    Boolean(assignedMsisdn) || userEsims.length > 0;
+
+  const totalEsims =
+    userEsims.length > 0
+      ? userEsims.length
+      : (purchase?.items?.reduce((s, c) => s + c.quantity, 0) ?? 0);
+
+  const headlineData = displayDataBalance(bundleDataMb);
+  const balanceAreaValue = displayDataBalance(bundleDataMb);
 
   const esimTitle =
-    primaryBundle?.name ??
-    primaryUserEsim?.esim?.description?.trim() ??
-    (primaryUserEsim?.esim?.msisdn ? `+${primaryUserEsim.esim.msisdn}` : 'eSIM');
+    assignedBundleName ??
+    (assignedMsisdn ? formatMsisdn(assignedMsisdn) : null) ??
+    'eSIM';
 
   const activationIso =
     purchase?.trip?.arrivalDate ?? primaryUserEsim?.created_at ?? null;
-
-  const hasActiveEsim = userEsims.length > 0;
 
   return (
     <div className="min-h-screen" style={{ backgroundColor: '#f6f8f6' }}>
       {/* Header bar */}
       <div className="bg-white border-b border-slate-100 px-4 py-5">
-        <div className="max-w-5xl mx-auto">
-          <p className="text-xs font-bold uppercase tracking-widest text-slate-400 mb-0.5">
-            Dashboard
-          </p>
-          <h1 className="text-xl font-extrabold text-slate-900">
-            {isAuthenticated
-              ? `Welcome back, ${user?.name?.split(' ')[0] ?? 'Traveller'}`
-              : 'Your eSIM Dashboard'}
-          </h1>
+        <div className="max-w-5xl mx-auto flex items-start justify-between gap-4">
+          <div>
+            <p className="text-xs font-bold uppercase tracking-widest text-slate-400 mb-0.5">
+              Dashboard
+            </p>
+            <h1 className="text-xl font-extrabold text-slate-900">
+              {isAuthenticated
+                ? `Welcome back, ${user?.name?.split(' ')[0] ?? 'Traveller'}`
+                : 'Your eSIM Dashboard'}
+            </h1>
+          </div>
+          <button
+            type="button"
+            onClick={() => setTopUpModalOpen(true)}
+            className="flex-shrink-0 px-4 py-2.5 rounded-xl text-sm font-bold text-white hover:opacity-90 transition-opacity"
+            style={{ backgroundColor: '#112116' }}
+          >
+            Top Up
+          </button>
         </div>
       </div>
+
+      {topUpModalOpen && (
+        <div
+          className={`fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4 bg-black/50 transition-opacity duration-300 ease-out ${
+            topUpModalShown && !topUpModalClosing ? 'opacity-100' : 'opacity-0'
+          } ${topUpModalClosing ? 'pointer-events-none' : ''}`}
+          onClick={() => closeTopUpModal()}
+          role="presentation"
+        >
+          <div
+            className={`bg-white rounded-2xl w-full max-w-lg max-h-[85vh] overflow-hidden shadow-xl transition-all duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] ${
+              topUpModalShown && !topUpModalClosing
+                ? 'opacity-100 translate-y-0 sm:scale-100'
+                : 'opacity-0 translate-y-full sm:translate-y-4 sm:scale-95'
+            }`}
+            onClick={(e) => e.stopPropagation()}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="topup-modal-title"
+          >
+            <div
+              className="flex items-center justify-between px-5 py-4 border-b border-slate-100"
+              style={{ backgroundColor: '#112116' }}
+            >
+              <div>
+                <h2 id="topup-modal-title" className="text-base font-extrabold text-white">
+                  Top Up
+                </h2>
+                <p className="text-xs text-white/60 mt-0.5">Choose a bundle to purchase</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => closeTopUpModal()}
+                disabled={topUpModalClosing}
+                className="p-2 rounded-lg text-white/70 hover:text-white hover:bg-white/10 transition-colors disabled:opacity-50"
+                aria-label="Close"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="overflow-y-auto p-4 space-y-3 max-h-[calc(85vh-4.5rem)]">
+              {topUpBundlesLoading ? (
+                <div className="flex items-center justify-center py-12">
+                  <Loader2 size={28} className="animate-spin text-slate-400" />
+                </div>
+              ) : topUpBundles.length === 0 ? (
+                <div className="text-center py-12">
+                  <Package size={36} className="mx-auto mb-3 text-slate-300" />
+                  <p className="text-sm text-slate-500 font-medium">No bundles available right now.</p>
+                </div>
+              ) : (
+                topUpBundles.map((bundle) => (
+                  <div
+                    key={bundle.id}
+                    className="rounded-xl border border-slate-200 p-4 flex items-center justify-between gap-4"
+                  >
+                    <div className="min-w-0">
+                      <p className="text-sm font-extrabold text-slate-900">{bundle.name}</p>
+                      <p className="text-lg font-black text-slate-900 tracking-tight">
+                        {formatMb(bundle.data_mb)}
+                      </p>
+                      {bundle.tagline && bundle.tagline !== bundle.name && (
+                        <p className="text-xs text-slate-500">{bundle.tagline}</p>
+                      )}
+                      <p className="text-xs text-slate-500 mt-1">
+                        {bundle.validity_days ?? 30} days · {bundle.currency ?? 'USD'}{' '}
+                        {Number(bundle.price ?? 0).toFixed(0)}
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => handleTopUpPurchase(bundle)}
+                      disabled={topUpModalClosing}
+                      className="flex-shrink-0 px-4 py-2.5 rounded-xl text-xs font-bold text-white hover:opacity-90 transition-opacity disabled:opacity-60"
+                      style={{ backgroundColor: '#112116' }}
+                    >
+                      Purchase
+                    </button>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       <div className="max-w-5xl mx-auto px-4 py-8 space-y-6">
         {esimsError && (
@@ -205,24 +772,57 @@ export default function DashboardPage() {
           </div>
         )}
 
-        {esimsLoading ? (
+        {waitingForSim && !hasActiveEsim && (
+          <div className="rounded-xl border border-sky-200 bg-sky-50 px-4 py-4 flex items-start gap-3">
+            <Loader2 size={20} className="animate-spin text-sky-600 flex-shrink-0 mt-0.5" />
+            <div>
+              <p className="text-sm font-bold text-sky-900">
+                We&apos;re assigning your number. This may take a few minutes.
+              </p>
+              <p className="text-xs text-sky-700 mt-1">
+                We&apos;ll update this page automatically when your SIM is ready.
+              </p>
+            </div>
+          </div>
+        )}
+
+        {assignmentLoading && !hasActiveEsim && !waitingForSim ? (
           <div className="rounded-2xl p-12 flex items-center justify-center bg-white border border-slate-100">
             <Loader2 size={28} className="animate-spin text-slate-400" />
           </div>
         ) : hasActiveEsim ? (
           <>
-            {/* Active eSIM card */}
+            {/* SIM card */}
             <div
               className="rounded-2xl p-6 text-white"
               style={{ backgroundColor: '#112116' }}
             >
               <div className="flex items-start justify-between mb-5">
                 <div>
-                  <p className="text-xs font-bold uppercase tracking-widest text-white/50 mb-1">
-                    Active eSIM
-                  </p>
-                  <h2 className="text-4xl font-black tracking-tight">{headlineData}</h2>
+                  <div className="flex items-center gap-2 mb-1">
+                    {isEsimType ? (
+                      <Wifi size={14} className="text-white/50" />
+                    ) : (
+                      <Smartphone size={14} className="text-white/50" />
+                    )}
+                    <p className="text-xs font-bold uppercase tracking-widest text-white/50">
+                      {simTypeTitle}
+                    </p>
+                  </div>
+                  {assignedMsisdn && (
+                    <h2 className="text-3xl sm:text-4xl font-black tracking-tight">
+                      {formatMsisdn(assignedMsisdn)}
+                    </h2>
+                  )}
+                  {!assignedMsisdn && (
+                    <h2 className="text-4xl font-black tracking-tight">{headlineData}</h2>
+                  )}
                   <p className="text-base font-black text-white mt-1">{esimTitle}</p>
+                  {assignedBundleDuration && (
+                    <p className="text-sm font-semibold mt-1" style={{ color: '#17cf54' }}>
+                      {assignedBundleDuration}
+                    </p>
+                  )}
                   {formatTripDate(activationIso) && (
                     <p className="text-xs font-semibold text-white/60 uppercase tracking-wide mt-2">
                       Scheduled activation
@@ -236,17 +836,16 @@ export default function DashboardPage() {
                   {purchase?.trip?.countryName && (
                     <p className="text-sm font-semibold mt-1 text-white/80">{purchase.trip.countryName}</p>
                   )}
-                  {primaryUserEsim?.esim?.msisdn && !primaryBundle?.name && (
-                    <p className="text-sm font-semibold mt-1 text-white/60">
-                      +{primaryUserEsim.esim.msisdn}
-                    </p>
-                  )}
                 </div>
                 <span
                   className="text-xs font-extrabold px-3 py-1.5 rounded-full"
-                  style={{ backgroundColor: '#17cf54', color: '#112116' }}
+                  style={
+                    simIsActive
+                      ? { backgroundColor: '#17cf54', color: '#112116' }
+                      : { backgroundColor: 'rgba(255,255,255,0.15)', color: 'rgba(255,255,255,0.8)' }
+                  }
                 >
-                  {esimStatusLabel(primaryUserEsim?.esim?.status)}
+                  {simStatusLabel(simStatus)}
                 </span>
               </div>
 
@@ -255,10 +854,37 @@ export default function DashboardPage() {
                 style={{ backgroundColor: 'rgba(255,255,255,0.15)' }}
               >
                 <div
-                  className="h-full rounded-full w-full"
-                  style={{ backgroundColor: '#17cf54' }}
+                  className="h-full rounded-full"
+                  style={{
+                    backgroundColor: simIsActive ? '#17cf54' : 'rgba(255,255,255,0.35)',
+                    width: simIsActive ? '100%' : '35%',
+                  }}
                 />
               </div>
+
+              {assignedMsisdn && balanceAreaValue !== '—' && (
+                <p className="text-sm text-white/60 mt-3">{balanceAreaValue} data plan</p>
+              )}
+
+              {!simIsActive && primaryUserEsim?.id && (
+                <button
+                  type="button"
+                  onClick={() => void handleActivateSim(primaryUserEsim.id)}
+                  disabled={activating}
+                  className="mt-5 w-full flex items-center justify-center gap-2 py-3.5 rounded-xl text-sm font-bold disabled:opacity-60 hover:opacity-90 transition-opacity"
+                  style={{ backgroundColor: '#17cf54', color: '#112116' }}
+                >
+                  {activating ? (
+                    <>
+                      <Loader2 size={16} className="animate-spin" /> Activating…
+                    </>
+                  ) : (
+                    <>
+                      <Zap size={16} /> Activate
+                    </>
+                  )}
+                </button>
+              )}
 
               {totalEsims > 1 && (
                 <div
@@ -266,9 +892,7 @@ export default function DashboardPage() {
                   style={{ color: 'rgba(255,255,255,0.6)' }}
                 >
                   <Globe size={14} />
-                  <span>
-                    You have {totalEsims} eSIMs on your account
-                  </span>
+                  <span>You have {totalEsims} eSIMs on your account</span>
                 </div>
               )}
             </div>
@@ -277,29 +901,31 @@ export default function DashboardPage() {
             <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
               {[
                 {
-                  icon: <Smartphone size={16} style={{ color: '#17cf54' }} />,
-                  label: 'eSIMs',
-                  value: String(totalEsims),
-                  sub: 'On your account',
+                  icon: isEsimType ? (
+                    <Wifi size={16} style={{ color: '#17cf54' }} />
+                  ) : (
+                    <Smartphone size={16} style={{ color: '#17cf54' }} />
+                  ),
+                  label: 'SIM Type',
+                  value: simTypeTitle,
+                  sub: simStatusLabel(simStatus),
                 },
                 {
                   icon: <Globe size={16} style={{ color: '#17cf54' }} />,
                   label: 'Balance',
-                  value: formatBalance(
-                    primaryUserEsim?.balance,
-                    primaryUserEsim?.balance_currency
-                  ),
-                  sub: primaryUserEsim?.balance_fetched_at
-                    ? `Updated ${formatTripDate(primaryUserEsim.balance_fetched_at) ?? '—'}`
-                    : (purchase?.trip?.countryName ?? 'Wallet balance'),
+                  value: balanceAreaValue,
+                  sub:
+                    bundleDataMb != null
+                      ? apiBundle?.name
+                        ? `${apiBundle.name} bundle`
+                        : 'Bundle data allowance'
+                      : 'No bundle data',
                 },
                 {
                   icon: <Clock size={16} style={{ color: '#17cf54' }} />,
-                  label: 'Date',
-                  value: formatTripDate(
-                    primaryUserEsim?.created_at ?? purchase?.date ?? null
-                  ) ?? '—',
-                  sub: primaryUserEsim?.created_at ? 'Assigned' : 'Order date',
+                  label: 'Duration',
+                  value: assignedBundleDuration ?? '—',
+                  sub: primaryUserEsim?.created_at ? 'Assigned' : 'Bundle validity',
                 },
               ].map((s) => (
                 <div
@@ -316,38 +942,52 @@ export default function DashboardPage() {
             </div>
 
             {/* Activation instructions */}
-            <div className="bg-white rounded-2xl border border-dashed border-slate-300 p-6">
-              <div className="flex items-center gap-2 mb-4">
-                <Info size={18} style={{ color: '#17cf54' }} />
-                <h3 className="text-xs font-extrabold uppercase tracking-widest text-slate-600">
-                  How to Activate
-                </h3>
-              </div>
-              {[
-                { num: '1', text: 'Open the email from Travela with your ', bold: 'eSIM QR Code' },
-                {
-                  num: '2',
-                  text: 'Go to Settings › Cellular › ',
-                  bold: 'Add eSIM',
-                  after: ' and scan the QR code',
-                },
-                { num: '3', text: 'Turn on ', bold: 'Data Roaming', after: ' for the new eSIM' },
-              ].map((step) => (
-                <div key={step.num} className="flex gap-3 mb-3">
-                  <div
-                    className="w-6 h-6 rounded-full flex-shrink-0 flex items-center justify-center text-xs font-bold"
-                    style={{ backgroundColor: 'rgba(23,207,84,0.15)', color: '#112116' }}
-                  >
-                    {step.num}
-                  </div>
-                  <p className="text-sm text-slate-600 leading-relaxed">
-                    {step.text}
-                    <strong className="text-slate-900">{step.bold}</strong>
-                    {step.after ?? ''}
-                  </p>
+            {isEsimType ? (
+              <div className="bg-white rounded-2xl border border-dashed border-slate-300 p-6">
+                <div className="flex items-center gap-2 mb-4">
+                  <Info size={18} style={{ color: '#17cf54' }} />
+                  <h3 className="text-xs font-extrabold uppercase tracking-widest text-slate-600">
+                    How to Activate
+                  </h3>
                 </div>
-              ))}
-            </div>
+                {[
+                  { num: '1', text: 'Open the email from Travela with your ', bold: 'eSIM QR Code' },
+                  {
+                    num: '2',
+                    text: 'Go to Settings › Cellular › ',
+                    bold: 'Add eSIM',
+                    after: ' and scan the QR code',
+                  },
+                  { num: '3', text: 'Turn on ', bold: 'Data Roaming', after: ' for the new eSIM' },
+                ].map((step) => (
+                  <div key={step.num} className="flex gap-3 mb-3">
+                    <div
+                      className="w-6 h-6 rounded-full flex-shrink-0 flex items-center justify-center text-xs font-bold"
+                      style={{ backgroundColor: 'rgba(23,207,84,0.15)', color: '#112116' }}
+                    >
+                      {step.num}
+                    </div>
+                    <p className="text-sm text-slate-600 leading-relaxed">
+                      {step.text}
+                      <strong className="text-slate-900">{step.bold}</strong>
+                      {step.after ?? ''}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="bg-white rounded-2xl border border-dashed border-slate-300 p-6">
+                <div className="flex items-center gap-2 mb-4">
+                  <Info size={18} style={{ color: '#17cf54' }} />
+                  <h3 className="text-xs font-extrabold uppercase tracking-widest text-slate-600">
+                    Physical SIM
+                  </h3>
+                </div>
+                <p className="text-sm text-slate-600 leading-relaxed">
+                  Insert your physical SIM card into your device. Tap <strong className="text-slate-900">Activate</strong> above once the card is in place to enable your plan.
+                </p>
+              </div>
+            )}
           </>
         ) : (
           /* Empty state */
@@ -364,19 +1004,6 @@ export default function DashboardPage() {
             </p>
           </div>
         )}
-
-        {/* Quick actions */}
-        <Link
-          href="/bundles?country=TZ&countryName=Tanzania&topup=1"
-          className="flex items-center justify-center gap-2 py-4 rounded-xl text-sm font-bold border-2 transition-colors hover:bg-slate-50"
-          style={{
-            backgroundColor: 'rgba(23,207,84,0.08)',
-            borderColor: 'rgba(23,207,84,0.3)',
-            color: '#112116',
-          }}
-        >
-          <RefreshCw size={16} /> Top Up
-        </Link>
 
         {/* Travela branding footer */}
         <div

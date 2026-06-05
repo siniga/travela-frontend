@@ -96,6 +96,14 @@ const TOPUP_STEPS: { id: Step; label: string }[] = [
   { id: 'payment', label: 'Payment' },
 ];
 
+const CHECKOUT_TRANSITION_KEY = 'travela:checkout-transition';
+
+function checkoutPageTransitionClass(revealed: boolean) {
+  return `transition-all duration-500 ease-[cubic-bezier(0.22,1,0.36,1)] ${
+    revealed ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-6'
+  }`;
+}
+
 function tripInclusiveDays(arrivalIso: string, departureIso: string) {
   const a = new Date(arrivalIso + 'T12:00:00');
   const b = new Date(departureIso + 'T12:00:00');
@@ -150,6 +158,19 @@ export default function CheckoutPage() {
     total_amount?: number | string;
     currency?: string;
   } | null>(null);
+  const [checkoutRevealed, setCheckoutRevealed] = useState(() => {
+    if (typeof window === 'undefined') return true;
+    return sessionStorage.getItem(CHECKOUT_TRANSITION_KEY) !== 'topup-modal';
+  });
+
+  useEffect(() => {
+    if (checkoutRevealed) return;
+    sessionStorage.removeItem(CHECKOUT_TRANSITION_KEY);
+    const id = requestAnimationFrame(() => {
+      requestAnimationFrame(() => setCheckoutRevealed(true));
+    });
+    return () => cancelAnimationFrame(id);
+  }, [checkoutRevealed]);
 
   useEffect(() => {
     const raw = localStorage.getItem('cart');
@@ -206,7 +227,10 @@ export default function CheckoutPage() {
 
   if (!cart) {
     return (
-      <div className="min-h-screen flex items-center justify-center">
+      <div
+        className={`min-h-screen flex items-center justify-center ${checkoutPageTransitionClass(checkoutRevealed)}`}
+        style={{ backgroundColor: '#f6f8f6' }}
+      >
         <Loader2 size={28} className="animate-spin text-slate-400" />
       </div>
     );
@@ -633,7 +657,10 @@ export default function CheckoutPage() {
 
   if (step === 'success' && isTopUpFlow) {
     return (
-      <div className="min-h-screen flex items-center justify-center">
+      <div
+        className={`min-h-screen flex items-center justify-center ${checkoutPageTransitionClass(checkoutRevealed)}`}
+        style={{ backgroundColor: '#f6f8f6' }}
+      >
         <Loader2 size={28} className="animate-spin text-slate-400" />
       </div>
     );
@@ -642,7 +669,10 @@ export default function CheckoutPage() {
   // ── Success (standard checkout only) ─────────────────────────────────────────
   if (step === 'success') {
     return (
-      <div className="min-h-screen" style={{ backgroundColor: '#f6f8f6' }}>
+      <div
+        className={`min-h-screen ${checkoutPageTransitionClass(checkoutRevealed)}`}
+        style={{ backgroundColor: '#f6f8f6' }}
+      >
         <div className="max-w-lg mx-auto px-4 py-16 text-center">
           <div
             className="w-20 h-20 rounded-full flex items-center justify-center mx-auto mb-6"
@@ -719,7 +749,10 @@ export default function CheckoutPage() {
 
   // ── Layout wrapper ─────────────────────────────────────────────────────────
   return (
-    <div className="min-h-screen" style={{ backgroundColor: '#f6f8f6' }}>
+    <div
+      className={`min-h-screen ${checkoutPageTransitionClass(checkoutRevealed)}`}
+      style={{ backgroundColor: '#f6f8f6' }}
+    >
       {/* Top bar */}
       <div className="bg-white border-b border-slate-100">
         <div className="max-w-3xl mx-auto px-4 py-4 flex items-center gap-4">

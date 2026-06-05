@@ -8,7 +8,7 @@
 const PUBLIC_API_BASE =
   process.env.NEXT_PUBLIC_BASE_URL?.replace(/\/+$/, "") ??
   process.env.NEXT_PUBLIC_API_URL?.replace(/\/+$/, "") ??
-  "https://api.thetravela.com/api";
+  "http://127.0.0.1:8000/api";
 
 function getBearerToken(): string | null {
   if (typeof window === "undefined") return null;
@@ -244,6 +244,29 @@ export const OrderApi = {
   finalize: async (_payload: unknown) => ({ data: {} }),
 };
 
+export type EsimAssignmentPayload = {
+  esim?: {
+    msisdn?: string | null;
+    iccid?: string | null;
+    status?: string | null;
+    sim_type?: string | null;
+    description?: string | null;
+  };
+  bundle?: {
+    name?: string | null;
+    duration?: string | null;
+    data_mb?: number | null;
+  };
+};
+
+export type EsimAssignmentStatus = {
+  has_sim: boolean;
+  status?: string;
+  retry_after_seconds?: number;
+  inventory?: { available?: number };
+  data?: EsimAssignmentPayload;
+};
+
 export const EsimsApi = {
   /** GET /me/esims — eSIM details for the signed-in user */
   listMine: async (): Promise<ApiResult> => {
@@ -253,6 +276,46 @@ export const EsimsApi = {
         Accept: "application/json",
         ...authHeaders(),
       },
+    });
+    const body = await parseResponseBody(res);
+    return { ok: res.ok, status: res.status, body };
+  },
+  /** GET /me/esims/assignment-status — check whether a SIM has been assigned */
+  assignmentStatus: async (): Promise<ApiResult> => {
+    const res = await fetch(`${PUBLIC_API_BASE}/me/esims/assignment-status`, {
+      method: "GET",
+      headers: {
+        Accept: "application/json",
+        ...authHeaders(),
+      },
+    });
+    const body = await parseResponseBody(res);
+    return { ok: res.ok, status: res.status, body };
+  },
+  /** POST /me/esims/register — assign a free SIM from inventory (auth required) */
+  register: async (): Promise<ApiResult> => {
+    const res = await fetch(`${PUBLIC_API_BASE}/me/esims/register`, {
+      method: "POST",
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+        ...authHeaders(),
+      },
+      body: JSON.stringify({}),
+    });
+    const body = await parseResponseBody(res);
+    return { ok: res.ok, status: res.status, body };
+  },
+  /** POST /me/esims/{userEsimId}/activate — activate an assigned SIM */
+  activate: async (userEsimId: number): Promise<ApiResult> => {
+    const res = await fetch(`${PUBLIC_API_BASE}/me/esims/${userEsimId}/activate`, {
+      method: "POST",
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+        ...authHeaders(),
+      },
+      body: JSON.stringify({}),
     });
     const body = await parseResponseBody(res);
     return { ok: res.ok, status: res.status, body };
