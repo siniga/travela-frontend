@@ -20,6 +20,11 @@ import { useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
 import { AuthApi, extractAuthTokenFromBody, OrderApi } from '@/lib/api';
 import { AUTH_STORAGE_SYNC } from '@/lib/auth-context';
+import {
+  extractPaymentUrl,
+  normalizePaymentUrl,
+  resolvePaymentTargetUrl,
+} from '@/lib/payment';
 
 interface CartItem {
   bundle: {
@@ -74,22 +79,6 @@ function apiErrorMessage(body: unknown, fallback: string): string {
     return String((body as { message: string }).message);
   }
   return fallback;
-}
-
-function extractPaymentUrl(summary: Record<string, unknown>): string | null {
-  const payment = summary.payment;
-  if (payment && typeof payment === 'object') {
-    const p = payment as Record<string, unknown>;
-    for (const key of ['checkout_url', 'payment_url', 'url'] as const) {
-      const v = p[key];
-      if (typeof v === 'string' && v.trim()) return v.trim();
-    }
-  }
-  for (const key of ['checkout_url', 'payment_url'] as const) {
-    const v = summary[key];
-    if (typeof v === 'string' && v.trim()) return v.trim();
-  }
-  return null;
 }
 
 const TOPUP_STEPS: { id: Step; label: string }[] = [
@@ -268,31 +257,6 @@ export default function CheckoutPage() {
     if (tab) tab.opener = null;
   };
 
-  const buildPaymentRedirectUrl = (opts: {
-    emailOverride?: string;
-    orderId?: string | number;
-    draftId?: string;
-  }) => {
-    const payEmail = (opts.emailOverride ?? email).trim();
-    const redirectBase = process.env.NEXT_PUBLIC_PAYMENT_REDIRECT_URL?.trim();
-    if (!redirectBase) {
-      throw new Error(
-        'Payment is not configured. Set NEXT_PUBLIC_PAYMENT_REDIRECT_URL or use an order API that returns a checkout URL.'
-      );
-    }
-
-    const url = new URL(redirectBase);
-    url.searchParams.set('amount', total.toFixed(2));
-    url.searchParams.set('currency', currency);
-    url.searchParams.set('email', payEmail);
-    url.searchParams.set('country', cart.country);
-    url.searchParams.set('countryName', cart.countryName);
-    url.searchParams.set('simType', cart.simType);
-    if (opts.orderId != null) url.searchParams.set('order_id', String(opts.orderId));
-    if (opts.draftId) url.searchParams.set('draft_id', opts.draftId);
-    return url.toString();
-  };
-
   const handleRegisterAndSendOtp = async () => {
     const trimmedName = fullName.trim();
     const trimmedEmail = email.trim();
@@ -385,7 +349,7 @@ export default function CheckoutPage() {
 
     const draftId =
       typeof summary?.draft_id === 'string' ? summary.draft_id : orderDraftId;
-    const paymentUrl = extractPaymentUrl(summary);
+    const paymentUrl = normalizePaymentUrl(extractPaymentUrl(orderRes.body));
 
     const result: OrderCheckoutResult = {
       paymentUrl,
@@ -611,7 +575,7 @@ export default function CheckoutPage() {
       const userId = registeredUserId ?? getStoredUserId();
       let orderId = orderStoredSummary?.order_id;
       let draftId = orderStoredSummary?.draft_id;
-      let paymentUrl = orderStoredSummary?.payment_url ?? null;
+      let paymentUrl = normalizePaymentUrl(orderStoredSummary?.payment_url);
 
       if (!orderId && userId) {
         const created = await createOrderForCheckout(userId);
@@ -624,8 +588,16 @@ export default function CheckoutPage() {
         throw new Error('Could not start payment. No order was created.');
       }
 
-      const targetUrl =
-        paymentUrl ?? buildPaymentRedirectUrl({ orderId, draftId });
+      const targetUrl = resolvePaymentTargetUrl(paymentUrl, {
+        amount: total,
+        currency,
+        email: email.trim(),
+        country: cart.country,
+        countryName: cart.countryName,
+        simType: cart.simType,
+        orderId,
+        draftId,
+      });
 
       savePendingPayment({ orderId, draftId });
       openPaymentInNewTab(targetUrl, paymentTab);
