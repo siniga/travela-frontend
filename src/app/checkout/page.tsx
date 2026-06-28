@@ -225,11 +225,9 @@ export default function CheckoutPage() {
     );
   }
 
-  const subtotal = cart.items.reduce(
+  const total = cart.items.reduce(
     (sum, item) => sum + Number(item.bundle.price ?? 0) * item.quantity, 0
   );
-  const tax = parseFloat((subtotal * 0.05).toFixed(2));
-  const total = subtotal + tax;
   const currency = cart.items[0]?.bundle.currency ?? 'USD';
 
   const formatDisplayDate = (iso: string) =>
@@ -534,7 +532,7 @@ export default function CheckoutPage() {
         currency: (it.bundle.currency ?? currency) as string,
       })),
       pricing: {
-        subtotal,
+        subtotal: total,
         discount_amount: 0,
         discount_code: null,
         total_amount: total,
@@ -840,15 +838,6 @@ export default function CheckoutPage() {
 
             {/* Price breakdown */}
             <div className="bg-white rounded-2xl border border-slate-200 p-5 mb-6">
-              <div className="flex justify-between text-sm text-slate-500 mb-2">
-                <span>Subtotal</span>
-                <span className="font-semibold text-slate-800">{currency} {subtotal.toFixed(2)}</span>
-              </div>
-              <div className="flex justify-between text-sm text-slate-500 mb-3">
-                <span>Tax (5%)</span>
-                <span className="font-semibold text-slate-800">{currency} {tax.toFixed(2)}</span>
-              </div>
-              <hr className="border-slate-100 mb-3" />
               <div className="flex justify-between">
                 <span className="font-extrabold text-slate-900">Total</span>
                 <span className="text-xl font-extrabold" style={{ color: '#112116' }}>
