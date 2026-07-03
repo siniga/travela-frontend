@@ -4,6 +4,7 @@ import {
   apiErrorMessage,
   BundlesApi,
   EsimsApi,
+  OrderApi,
   type EsimAssignmentPayload,
   type EsimAssignmentStatus,
 } from '@/lib/api';
@@ -14,6 +15,7 @@ import {
   Globe,
   Info,
   Loader2,
+  MapPin,
   Package,
   Smartphone,
   Wifi,
@@ -21,7 +23,7 @@ import {
   Zap,
 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 interface PurchaseData {
   items?: {
@@ -42,8 +44,73 @@ interface PurchaseData {
   };
   total?: number;
   currency?: string;
-  orderId?: string;
+  orderId?: string | number;
+  draftId?: string;
+  simType?: string;
   date?: string;
+}
+
+interface PendingPaymentData {
+  order_id?: string | number;
+  draft_id?: string;
+  simType?: string;
+  items?: PurchaseData['items'];
+  trip?: PurchaseData['trip'];
+  total?: number;
+  currency?: string;
+  email?: string;
+}
+
+interface OrderItemRecord {
+  id: number;
+  bundle_name: string;
+  data_amount: number | null;
+  validity_days: number;
+  price: string;
+  currency: string;
+}
+
+interface OrderRecord {
+  id: number;
+  draft_id: string;
+  payment_reference: string | null;
+  status: string;
+  payment_status: string;
+  total_amount: string;
+  currency: string;
+  paid_at: string | null;
+  created_at: string;
+  metadata?: {
+    countryName?: string;
+    simType?: string;
+    country?: string;
+  } | null;
+  trip?: {
+    destination_country?: string;
+    arrival_date?: string;
+    departure_date?: string;
+    duration_days?: number;
+  } | null;
+  order_items?: OrderItemRecord[];
+}
+
+interface PhysicalPickupDetails {
+  draftId?: string;
+  orderId?: string | number;
+  countryName?: string;
+  arrivalDate?: string | null;
+  departureDate?: string | null;
+  items: {
+    name: string;
+    dataLabel: string;
+    validityDays?: number;
+    price?: string;
+    currency?: string;
+  }[];
+  total?: string;
+  currency?: string;
+  paymentReference?: string | null;
+  status?: string;
 }
 
 interface EsimDetail {
@@ -307,6 +374,111 @@ function shouldPollAssignment(status: EsimAssignmentStatus): boolean {
   return status.status === 'waiting_for_inventory';
 }
 
+function readPendingPaymentFromStorage(): PendingPaymentData | null {
+  if (typeof window === 'undefined') return null;
+  const raw = localStorage.getItem('pendingPayment');
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw) as PendingPaymentData;
+  } catch {
+    return null;
+  }
+}
+
+function parseOrdersFromBody(body: unknown): OrderRecord[] {
+  if (!body || typeof body !== 'object') return [];
+  const b = body as { data?: unknown };
+  if (!Array.isArray(b.data)) return [];
+  return b.data as OrderRecord[];
+}
+
+function isPaidOrder(order: OrderRecord): boolean {
+  const status = (order.payment_status || order.status || '').toLowerCase();
+  return status === 'paid' || status === 'completed';
+}
+
+function formatOrderItemData(mb?: number | null) {
+  if (mb == null || mb <= 0) return '—';
+  return mb >= 1024 ? `${(mb / 1024).toFixed(0)} GB` : `${mb} MB`;
+}
+
+function resolvePhysicalPickupDetails(
+  orders: OrderRecord[],
+  pendingPayment: PendingPaymentData | null,
+  purchase: PurchaseData | null
+): PhysicalPickupDetails | null {
+  const apiOrder = orders
+    .filter((o) => o.metadata?.simType === 'physical' && isPaidOrder(o))
+    .sort(
+      (a, b) =>
+        new Date(b.paid_at ?? b.created_at).getTime() -
+        new Date(a.paid_at ?? a.created_at).getTime()
+    )[0];
+
+  if (apiOrder) {
+    const items =
+      apiOrder.order_items?.map((item) => ({
+        name: item.bundle_name || 'Bundle',
+        dataLabel: formatOrderItemData(item.data_amount),
+        validityDays: item.validity_days,
+        price: item.price,
+        currency: item.currency ?? apiOrder.currency,
+      })) ?? [];
+
+    return {
+      draftId: apiOrder.draft_id,
+      orderId: apiOrder.id,
+      countryName:
+        apiOrder.metadata?.countryName ?? apiOrder.trip?.destination_country ?? undefined,
+      arrivalDate: apiOrder.trip?.arrival_date ?? null,
+      departureDate: apiOrder.trip?.departure_date ?? null,
+      items,
+      total: apiOrder.total_amount,
+      currency: apiOrder.currency,
+      paymentReference: apiOrder.payment_reference,
+      status: apiOrder.payment_status || apiOrder.status,
+    };
+  }
+
+  const localSource = pendingPayment?.simType === 'physical' ? pendingPayment : null;
+  const purchaseSource =
+    !localSource && purchase?.simType === 'physical' ? purchase : null;
+  const source = localSource ?? purchaseSource;
+  if (!source) return null;
+
+  const items =
+    source.items?.map((item) => ({
+      name: item.bundle.name,
+      dataLabel: formatOrderItemData(item.bundle.data_mb),
+      validityDays: item.bundle.validity_days,
+      price:
+        item.bundle.price != null
+          ? Number(item.bundle.price).toFixed(2)
+          : undefined,
+      currency: item.bundle.currency ?? source.currency,
+    })) ?? [];
+
+  return {
+    draftId: localSource?.draft_id ?? purchase?.draftId,
+    orderId: localSource?.order_id ?? purchase?.orderId,
+    countryName: source.trip?.countryName,
+    arrivalDate: source.trip?.arrivalDate ?? null,
+    departureDate: source.trip?.departureDate ?? null,
+    items,
+    total: source.total != null ? Number(source.total).toFixed(2) : undefined,
+    currency: source.currency,
+    status: 'paid',
+  };
+}
+
+function hasPhysicalSimPurchase(
+  orders: OrderRecord[],
+  pendingPayment: PendingPaymentData | null,
+  purchase: PurchaseData | null
+): boolean {
+  return resolvePhysicalPickupDetails(orders, pendingPayment, purchase) != null;
+}
+
 function simTypeLabel(simType?: string | null) {
   const normalized = (simType ?? 'esim').toLowerCase();
   if (normalized === 'physical') return 'Physical SIM Card';
@@ -330,6 +502,9 @@ export default function DashboardPage() {
   const { isAuthenticated, isLoading, user } = useAuth();
   const router = useRouter();
   const [purchase, setPurchase] = useState<PurchaseData | null>(null);
+  const [pendingPayment, setPendingPayment] = useState<PendingPaymentData | null>(null);
+  const [orders, setOrders] = useState<OrderRecord[]>([]);
+  const [ordersLoading, setOrdersLoading] = useState(true);
   const [userEsims, setUserEsims] = useState<UserEsimRecord[]>([]);
   const [latestOrderBundle, setLatestOrderBundle] = useState<BundleDetail | null>(null);
   const [assignedSim, setAssignedSim] = useState<EsimAssignmentPayload | null>(null);
@@ -342,6 +517,27 @@ export default function DashboardPage() {
   const [topUpModalClosing, setTopUpModalClosing] = useState(false);
   const [topUpBundles, setTopUpBundles] = useState<TopUpBundle[]>([]);
   const [topUpBundlesLoading, setTopUpBundlesLoading] = useState(false);
+  const ordersRef = useRef(orders);
+  const purchaseRef = useRef(purchase);
+
+  ordersRef.current = orders;
+  purchaseRef.current = purchase;
+
+  const loadOrders = useCallback(async () => {
+    setOrdersLoading(true);
+    try {
+      const res = await OrderApi.listMine();
+      if (!res.ok) {
+        setOrders([]);
+        return;
+      }
+      setOrders(parseOrdersFromBody(res.body));
+    } catch {
+      setOrders([]);
+    } finally {
+      setOrdersLoading(false);
+    }
+  }, []);
 
   const loadEsims = useCallback(async () => {
     setEsimsError('');
@@ -510,10 +706,16 @@ export default function DashboardPage() {
         setPurchase(null);
       }
     }
+    setPendingPayment(readPendingPaymentFromStorage());
   }, [isAuthenticated]);
 
   useEffect(() => {
     if (!isAuthenticated) return;
+    void loadOrders();
+  }, [isAuthenticated, loadOrders]);
+
+  useEffect(() => {
+    if (!isAuthenticated || ordersLoading) return;
 
     const signal: WatcherSignal = { cancelled: false };
 
@@ -539,10 +741,24 @@ export default function DashboardPage() {
           }
 
           const status = parseAssignmentStatus(statusRes.body);
+          const pendingPay = readPendingPaymentFromStorage();
+          const isPhysicalPurchase =
+            pendingPay?.simType === 'physical' ||
+            hasPhysicalSimPurchase(ordersRef.current, pendingPay, purchaseRef.current);
+
+          if (isPhysicalPurchase && !status.has_sim) {
+            setWaitingForSim(false);
+            setAssignmentLoading(false);
+            return;
+          }
 
           if (status.has_sim) {
             applyAssignedSim(status.data);
             setWaitingForSim(false);
+            if (pendingPay?.simType === 'physical') {
+              localStorage.removeItem('pendingPayment');
+              setPendingPayment(null);
+            }
             await loadEsims();
             setAssignmentLoading(false);
             return;
@@ -591,7 +807,7 @@ export default function DashboardPage() {
       signal.cancelled = true;
       if (signal.timeoutId) window.clearTimeout(signal.timeoutId);
     };
-  }, [isAuthenticated, applyAssignedSim, loadEsims]);
+  }, [isAuthenticated, applyAssignedSim, loadEsims, ordersLoading]);
 
   if (isLoading || !isAuthenticated) {
     return (
@@ -636,6 +852,14 @@ export default function DashboardPage() {
 
   const hasActiveEsim =
     Boolean(assignedMsisdn) || userEsims.length > 0;
+
+  const physicalPickupDetails = resolvePhysicalPickupDetails(
+    orders,
+    pendingPayment,
+    purchase
+  );
+  const isPhysicalSimAwaitingPickup =
+    !hasActiveEsim && physicalPickupDetails != null;
 
   const totalEsims =
     userEsims.length > 0
@@ -772,7 +996,7 @@ export default function DashboardPage() {
           </div>
         )}
 
-        {waitingForSim && !hasActiveEsim && (
+        {waitingForSim && !hasActiveEsim && !isPhysicalSimAwaitingPickup && (
           <div className="rounded-xl border border-sky-200 bg-sky-50 px-4 py-4 flex items-start gap-3">
             <Loader2 size={20} className="animate-spin text-sky-600 flex-shrink-0 mt-0.5" />
             <div>
@@ -786,7 +1010,146 @@ export default function DashboardPage() {
           </div>
         )}
 
-        {assignmentLoading && !hasActiveEsim && !waitingForSim ? (
+        {isPhysicalSimAwaitingPickup && physicalPickupDetails && (
+          <div className="rounded-2xl border border-emerald-200 bg-white overflow-hidden shadow-sm">
+            <div
+              className="px-6 py-5 flex items-start gap-4"
+              style={{ backgroundColor: 'rgba(23,207,84,0.08)' }}
+            >
+              <div
+                className="w-12 h-12 rounded-xl flex-shrink-0 flex items-center justify-center"
+                style={{ backgroundColor: 'rgba(23,207,84,0.15)' }}
+              >
+                <MapPin size={22} style={{ color: '#112116' }} />
+              </div>
+              <div>
+                <h2 className="text-lg font-extrabold text-slate-900 mb-1">
+                  Your number is reserved — pick up your SIM at the airport
+                </h2>
+                <p className="text-sm text-slate-600 leading-relaxed">
+                  Good news — your Travela number has already been purchased and is waiting for you.
+                  When you arrive, visit the Travela counter at the airport to collect your physical
+                  SIM card. Bring a valid ID and your order reference below so our team can help you
+                  quickly.
+                </p>
+              </div>
+            </div>
+
+            <div className="px-6 py-5 border-t border-slate-100">
+              <div className="flex items-center gap-2 mb-4">
+                <Package size={16} style={{ color: '#17cf54' }} />
+                <h3 className="text-xs font-extrabold uppercase tracking-widest text-slate-600">
+                  Order details
+                </h3>
+              </div>
+
+              <div className="grid gap-3 sm:grid-cols-2 mb-4">
+                {physicalPickupDetails.draftId && (
+                  <div className="rounded-xl bg-slate-50 border border-slate-100 px-4 py-3 sm:col-span-2">
+                    <p className="text-xs font-bold uppercase tracking-wide text-slate-400 mb-1">
+                      Order reference (show at counter)
+                    </p>
+                    <p className="text-lg font-black text-slate-900 tracking-tight break-all">
+                      {physicalPickupDetails.draftId}
+                    </p>
+                  </div>
+                )}
+                {physicalPickupDetails.orderId != null && (
+                  <div className="rounded-xl bg-slate-50 border border-slate-100 px-4 py-3">
+                    <p className="text-xs font-bold uppercase tracking-wide text-slate-400 mb-1">
+                      Order ID
+                    </p>
+                    <p className="text-sm font-bold text-slate-900">{physicalPickupDetails.orderId}</p>
+                  </div>
+                )}
+                {physicalPickupDetails.countryName && (
+                  <div className="rounded-xl bg-slate-50 border border-slate-100 px-4 py-3">
+                    <p className="text-xs font-bold uppercase tracking-wide text-slate-400 mb-1">
+                      Destination
+                    </p>
+                    <p className="text-sm font-bold text-slate-900">{physicalPickupDetails.countryName}</p>
+                  </div>
+                )}
+                {formatTripDate(physicalPickupDetails.arrivalDate) && (
+                  <div className="rounded-xl bg-slate-50 border border-slate-100 px-4 py-3">
+                    <p className="text-xs font-bold uppercase tracking-wide text-slate-400 mb-1">
+                      Arrival date
+                    </p>
+                    <p className="text-sm font-bold text-slate-900">
+                      {formatTripDate(physicalPickupDetails.arrivalDate)}
+                    </p>
+                  </div>
+                )}
+                {formatTripDate(physicalPickupDetails.departureDate) && (
+                  <div className="rounded-xl bg-slate-50 border border-slate-100 px-4 py-3">
+                    <p className="text-xs font-bold uppercase tracking-wide text-slate-400 mb-1">
+                      Departure date
+                    </p>
+                    <p className="text-sm font-bold text-slate-900">
+                      {formatTripDate(physicalPickupDetails.departureDate)}
+                    </p>
+                  </div>
+                )}
+                {physicalPickupDetails.paymentReference && (
+                  <div className="rounded-xl bg-slate-50 border border-slate-100 px-4 py-3 sm:col-span-2">
+                    <p className="text-xs font-bold uppercase tracking-wide text-slate-400 mb-1">
+                      Payment reference
+                    </p>
+                    <p className="text-sm font-bold text-slate-900 break-all">
+                      {physicalPickupDetails.paymentReference}
+                    </p>
+                  </div>
+                )}
+              </div>
+
+              {physicalPickupDetails.items.length > 0 && (
+                <div className="space-y-2 mb-4">
+                  {physicalPickupDetails.items.map((item, index) => (
+                    <div
+                      key={`${item.name}-${index}`}
+                      className="flex items-center justify-between gap-3 rounded-xl border border-slate-100 px-4 py-3"
+                    >
+                      <div className="min-w-0">
+                        <p className="text-sm font-bold text-slate-900">
+                          {item.dataLabel} · {item.name}
+                        </p>
+                        {item.validityDays != null && (
+                          <p className="text-xs text-slate-500 mt-0.5">
+                            {item.validityDays} days validity · Physical SIM
+                          </p>
+                        )}
+                      </div>
+                      {item.price != null && (
+                        <p className="text-sm font-semibold text-slate-800 flex-shrink-0">
+                          {item.currency ?? physicalPickupDetails.currency}{' '}
+                          {item.price}
+                        </p>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {physicalPickupDetails.total != null && physicalPickupDetails.currency && (
+                <div className="flex items-center justify-between pt-3 border-t border-slate-100">
+                  <p className="text-sm font-bold text-slate-700">Total paid</p>
+                  <p className="text-base font-extrabold" style={{ color: '#112116' }}>
+                    {physicalPickupDetails.currency} {physicalPickupDetails.total}
+                  </p>
+                </div>
+              )}
+
+              {ordersLoading && (
+                <p className="text-xs text-slate-400 mt-3 flex items-center gap-2">
+                  <Loader2 size={12} className="animate-spin" />
+                  Refreshing order details…
+                </p>
+              )}
+            </div>
+          </div>
+        )}
+
+        {assignmentLoading && !hasActiveEsim && !waitingForSim && !isPhysicalSimAwaitingPickup ? (
           <div className="rounded-2xl p-12 flex items-center justify-center bg-white border border-slate-100">
             <Loader2 size={28} className="animate-spin text-slate-400" />
           </div>
@@ -989,7 +1352,7 @@ export default function DashboardPage() {
               </div>
             )}
           </>
-        ) : (
+        ) : isPhysicalSimAwaitingPickup ? null : (
           /* Empty state */
           <div className="bg-white rounded-2xl border border-slate-100 p-10 text-center">
             <div
