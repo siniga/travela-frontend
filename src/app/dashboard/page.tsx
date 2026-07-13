@@ -1,5 +1,6 @@
 'use client';
 
+import ActivateEsimButton from '@/components/esim/ActivateEsimButton';
 import {
   apiErrorMessage,
   BundlesApi,
@@ -20,7 +21,6 @@ import {
   Smartphone,
   Wifi,
   X,
-  Zap,
 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -511,7 +511,6 @@ export default function DashboardPage() {
   const [assignmentLoading, setAssignmentLoading] = useState(true);
   const [waitingForSim, setWaitingForSim] = useState(false);
   const [esimsError, setEsimsError] = useState('');
-  const [activating, setActivating] = useState(false);
   const [topUpModalOpen, setTopUpModalOpen] = useState(false);
   const [topUpModalShown, setTopUpModalShown] = useState(false);
   const [topUpModalClosing, setTopUpModalClosing] = useState(false);
@@ -573,25 +572,6 @@ export default function DashboardPage() {
     },
     []
   );
-
-  const handleActivateSim = useCallback(async (userEsimId: number) => {
-    setActivating(true);
-    setEsimsError('');
-    try {
-      const res = await EsimsApi.activate(userEsimId);
-      if (!res.ok) {
-        setEsimsError(apiErrorMessage(res.body, `Activation failed (HTTP ${res.status}).`));
-        return;
-      }
-      await loadEsims();
-    } catch (e: unknown) {
-      const fallback =
-        e instanceof Error ? e.message : typeof e === 'string' ? e : String(e);
-      setEsimsError(fallback || 'Activation failed.');
-    } finally {
-      setActivating(false);
-    }
-  }, [loadEsims]);
 
   useEffect(() => {
     if (!topUpModalOpen) return;
@@ -1229,24 +1209,8 @@ export default function DashboardPage() {
                 <p className="text-sm text-white/60 mt-3">{balanceAreaValue} data plan</p>
               )}
 
-              {!simIsActive && primaryUserEsim?.id && (
-                <button
-                  type="button"
-                  onClick={() => void handleActivateSim(primaryUserEsim.id)}
-                  disabled={activating}
-                  className="mt-5 w-full flex items-center justify-center gap-2 py-3.5 rounded-xl text-sm font-bold disabled:opacity-60 hover:opacity-90 transition-opacity"
-                  style={{ backgroundColor: '#17cf54', color: '#112116' }}
-                >
-                  {activating ? (
-                    <>
-                      <Loader2 size={16} className="animate-spin" /> Activating…
-                    </>
-                  ) : (
-                    <>
-                      <Zap size={16} /> Activate
-                    </>
-                  )}
-                </button>
+              {isEsimType && primaryUserEsim?.id && (
+                <ActivateEsimButton userEsimId={primaryUserEsim.id} variant="dark" />
               )}
 
               {totalEsims > 1 && (
@@ -1314,12 +1278,15 @@ export default function DashboardPage() {
                   </h3>
                 </div>
                 {[
-                  { num: '1', text: 'Open the email from Travela with your ', bold: 'eSIM QR Code' },
+                  {
+                    num: '1',
+                    text: 'Tap ',
+                    bold: 'Activate eSIM',
+                    after: ' above to open your device setup flow',
+                  },
                   {
                     num: '2',
-                    text: 'Go to Settings › Cellular › ',
-                    bold: 'Add eSIM',
-                    after: ' and scan the QR code',
+                    text: 'Follow the prompts to add the eSIM to your phone',
                   },
                   { num: '3', text: 'Turn on ', bold: 'Data Roaming', after: ' for the new eSIM' },
                 ].map((step) => (
@@ -1347,7 +1314,7 @@ export default function DashboardPage() {
                   </h3>
                 </div>
                 <p className="text-sm text-slate-600 leading-relaxed">
-                  Insert your physical SIM card into your device. Tap <strong className="text-slate-900">Activate</strong> above once the card is in place to enable your plan.
+                  Insert your physical SIM card into your device. Your plan will activate once the SIM is registered on the network.
                 </p>
               </div>
             )}

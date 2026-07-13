@@ -303,7 +303,7 @@ export default function CheckoutPage() {
 
       localStorage.setItem(
         'user',
-        JSON.stringify({ email: trimmedEmail, name: trimmedName, id: userId })
+        JSON.stringify({ email: trimmedEmail, name: trimmedName, id: userId, email_verified: false })
       );
       window.dispatchEvent(new Event(AUTH_STORAGE_SYNC));
       setEmail(trimmedEmail);
@@ -391,6 +391,19 @@ export default function CheckoutPage() {
       }
 
       await createOrderForCheckout(userId);
+
+      try {
+        const raw = localStorage.getItem('user');
+        if (raw) {
+          const u = JSON.parse(raw) as Record<string, unknown>;
+          u.email_verified = true;
+          localStorage.setItem('user', JSON.stringify(u));
+          window.dispatchEvent(new Event(AUTH_STORAGE_SYNC));
+        }
+      } catch {
+        // ignore malformed stored user data
+      }
+
       setStep('payment');
     } catch (e: unknown) {
       const fallback =
@@ -610,13 +623,29 @@ export default function CheckoutPage() {
     }
   };
 
+  const isStoredEmailVerified = (): boolean => {
+    if (typeof window === 'undefined') return false;
+    try {
+      const raw = localStorage.getItem('user');
+      if (!raw) return false;
+      const u = JSON.parse(raw) as { email_verified?: boolean };
+      return u.email_verified === true;
+    } catch {
+      return false;
+    }
+  };
+
   const handleCartContinue = () => {
     const token =
       typeof window !== 'undefined' ? localStorage.getItem('token') : null;
     if (token) {
       const storedId = getStoredUserId();
       if (storedId) setRegisteredUserId(storedId);
-      setStep('payment');
+      if (isStoredEmailVerified()) {
+        setStep('payment');
+      } else {
+        setStep('otp');
+      }
       return;
     }
     setStep('register');

@@ -120,10 +120,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
 
       const apiUser = extractUserFromAuthBody(result.body);
+      const bodyRecord =
+        result.body && typeof result.body === 'object'
+          ? (result.body as Record<string, unknown>)
+          : null;
+      const emailVerified =
+        apiUser?.email_verified === true || bodyRecord?.email_verified === true;
       const authUser: User = {
         id: apiUser?.id,
         name: apiUser?.name,
         email: apiUser?.email ?? trimmedEmail,
+        email_verified: emailVerified,
       };
 
       persistSession(authToken, authUser);

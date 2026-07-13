@@ -113,6 +113,7 @@ export type AuthUserPayload = {
   id?: number | string;
   name?: string;
   email?: string;
+  email_verified?: boolean;
 };
 
 export function extractUserFromAuthBody(body: unknown): AuthUserPayload | null {
@@ -123,11 +124,13 @@ export function extractUserFromAuthBody(body: unknown): AuthUserPayload | null {
     const id = record.id;
     const name = record.name;
     const email = record.email;
+    const emailVerified = record.email_verified;
     if (id == null && name == null && email == null) return null;
     return {
       id: typeof id === "number" || typeof id === "string" ? id : undefined,
       name: typeof name === "string" ? name : undefined,
       email: typeof email === "string" ? email : undefined,
+      email_verified: typeof emailVerified === "boolean" ? emailVerified : undefined,
     };
   };
 
@@ -323,6 +326,11 @@ export type EsimAssignmentStatus = {
   data?: EsimAssignmentPayload;
 };
 
+export type EsimActivationData = {
+  qr_code_data: string;
+  lpa_string: string;
+};
+
 export const EsimsApi = {
   /** GET /me/esims — eSIM details for the signed-in user */
   listMine: async (): Promise<ApiResult> => {
@@ -362,18 +370,40 @@ export const EsimsApi = {
     const body = await parseResponseBody(res);
     return { ok: res.ok, status: res.status, body };
   },
-  /** POST /me/esims/{userEsimId}/activate — activate an assigned SIM */
-  activate: async (userEsimId: number): Promise<ApiResult> => {
-    const res = await fetch(`${PUBLIC_API_BASE}/me/esims/${userEsimId}/activate`, {
-      method: "POST",
+  /** GET /me/esims/{userEsimId}/activation — LPA string for device eSIM install */
+  getActivation: async (userEsimId: number): Promise<ApiResult> => {
+    const res = await fetch(`${PUBLIC_API_BASE}/me/esims/${userEsimId}/activation`, {
+      method: "GET",
       headers: {
         Accept: "application/json",
-        "Content-Type": "application/json",
         ...authHeaders(),
       },
-      body: JSON.stringify({}),
     });
     const body = await parseResponseBody(res);
     return { ok: res.ok, status: res.status, body };
   },
 };
+
+/** Parse GET /me/esims/{id}/activation response */
+export function parseEsimActivation(body: unknown): EsimActivationData | null {
+  if (!body || typeof body !== "object") return null;
+  const root = body as Record<string, unknown>;
+  const data =
+    root.data && typeof root.data === "object" && !Array.isArray(root.data)
+      ? (root.data as Record<string, unknown>)
+      : root;
+
+  const lpa =
+    typeof data.lpa_string === "string"
+      ? data.lpa_string.trim()
+      : typeof data.qr_code_data === "string"
+        ? data.qr_code_data.trim()
+        : "";
+
+  if (!lpa) return null;
+
+  return {
+    qr_code_data: lpa,
+    lpa_string: lpa,
+  };
+}
