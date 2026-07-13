@@ -310,7 +310,16 @@ export default function CheckoutPage() {
       setFullName(trimmedName);
 
       setOtpError('');
-      setOtpInfo('');
+      setOtpInfo(
+        result.body &&
+          typeof result.body === 'object' &&
+          (result.body as { verification_email_sent?: boolean }).verification_email_sent === false
+          ? apiErrorMessage(
+              result.body,
+              'Account created, but we could not send the verification email. Use resend code below.'
+            )
+          : ''
+      );
       setOtp('');
       setStep('otp');
     } catch (e: unknown) {
