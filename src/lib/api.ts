@@ -304,12 +304,19 @@ export const OrderApi = {
 };
 
 export type EsimAssignmentPayload = {
+  id?: number;
   esim?: {
+    id?: number;
     msisdn?: string | null;
+    phone_number?: string | null;
     iccid?: string | null;
     status?: string | null;
+    sale_status?: string | null;
     sim_type?: string | null;
+    provider_status?: string | null;
     description?: string | null;
+    qr_code_data?: string | null;
+    has_activation_data?: boolean;
   };
   bundle?: {
     name?: string | null;
@@ -328,7 +335,7 @@ export type EsimAssignmentStatus = {
 
 export type EsimActivationData = {
   qr_code_data: string;
-  lpa_string: string;
+  esim?: EsimAssignmentPayload["esim"];
 };
 
 export const EsimsApi = {
@@ -370,7 +377,7 @@ export const EsimsApi = {
     const body = await parseResponseBody(res);
     return { ok: res.ok, status: res.status, body };
   },
-  /** GET /me/esims/{userEsimId}/activation — LPA string for device eSIM install */
+  /** GET /me/esims/{userEsimId}/activation — qr_code_data for device eSIM install */
   getActivation: async (userEsimId: number): Promise<ApiResult> => {
     const res = await fetch(`${PUBLIC_API_BASE}/me/esims/${userEsimId}/activation`, {
       method: "GET",
@@ -384,7 +391,7 @@ export const EsimsApi = {
   },
 };
 
-/** Parse GET /me/esims/{id}/activation response */
+/** Parse GET /me/esims/{id}/activation response — activation value is `qr_code_data` only. */
 export function parseEsimActivation(body: unknown): EsimActivationData | null {
   if (!body || typeof body !== "object") return null;
   const root = body as Record<string, unknown>;
@@ -393,17 +400,18 @@ export function parseEsimActivation(body: unknown): EsimActivationData | null {
       ? (root.data as Record<string, unknown>)
       : root;
 
-  const lpa =
-    typeof data.lpa_string === "string"
-      ? data.lpa_string.trim()
-      : typeof data.qr_code_data === "string"
-        ? data.qr_code_data.trim()
-        : "";
+  const qr =
+    typeof data.qr_code_data === "string" ? data.qr_code_data.trim() : "";
 
-  if (!lpa) return null;
+  if (!qr) return null;
+
+  const esim =
+    data.esim && typeof data.esim === "object" && !Array.isArray(data.esim)
+      ? (data.esim as EsimAssignmentPayload["esim"])
+      : undefined;
 
   return {
-    qr_code_data: lpa,
-    lpa_string: lpa,
+    qr_code_data: qr,
+    esim,
   };
 }

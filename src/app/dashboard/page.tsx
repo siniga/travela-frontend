@@ -117,11 +117,15 @@ interface EsimDetail {
   id: number;
   sim_id?: number | null;
   msisdn?: string | null;
+  phone_number?: string | null;
   iccid?: string | null;
   description?: string | null;
   status?: string | null;
+  sale_status?: string | null;
   sim_type?: string | null;
   provider_status?: string | null;
+  qr_code_data?: string | null;
+  has_activation_data?: boolean;
 }
 
 interface BundleDetail {
@@ -803,7 +807,21 @@ export default function DashboardPage() {
   const orderItemDataAmount = coerceNumber(primaryUserEsim?.order_item?.data_amount);
 
   const assignedMsisdn =
-    assignedSim?.esim?.msisdn ?? primaryUserEsim?.esim?.msisdn ?? null;
+    assignedSim?.esim?.msisdn ??
+    assignedSim?.esim?.phone_number ??
+    primaryUserEsim?.esim?.msisdn ??
+    primaryUserEsim?.esim?.phone_number ??
+    null;
+  const assignedIccid =
+    assignedSim?.esim?.iccid ?? primaryUserEsim?.esim?.iccid ?? null;
+  const assignedQrCodeData =
+    (typeof primaryUserEsim?.esim?.qr_code_data === 'string'
+      ? primaryUserEsim.esim.qr_code_data.trim()
+      : '') ||
+    (typeof assignedSim?.esim?.qr_code_data === 'string'
+      ? assignedSim.esim.qr_code_data.trim()
+      : '') ||
+    null;
   const assignedBundleName =
     apiBundle?.alias ??
     apiBundle?.name ??
@@ -1160,6 +1178,11 @@ export default function DashboardPage() {
                   {!assignedMsisdn && (
                     <h2 className="text-4xl font-black tracking-tight">{headlineData}</h2>
                   )}
+                  {assignedIccid && (
+                    <p className="text-xs font-semibold text-white/55 mt-2 tracking-wide break-all">
+                      ICCID {assignedIccid}
+                    </p>
+                  )}
                   <p className="text-base font-black text-white mt-1">{esimTitle}</p>
                   {assignedBundleDuration && (
                     <p className="text-sm font-semibold mt-1" style={{ color: '#17cf54' }}>
@@ -1210,7 +1233,11 @@ export default function DashboardPage() {
               )}
 
               {isEsimType && primaryUserEsim?.id && (
-                <ActivateEsimButton userEsimId={primaryUserEsim.id} variant="dark" />
+                <ActivateEsimButton
+                  userEsimId={primaryUserEsim.id}
+                  qrCodeData={assignedQrCodeData}
+                  variant="dark"
+                />
               )}
 
               {totalEsims > 1 && (
@@ -1253,6 +1280,16 @@ export default function DashboardPage() {
                   label: 'Duration',
                   value: assignedBundleDuration ?? '—',
                   sub: primaryUserEsim?.created_at ? 'Assigned' : 'Bundle validity',
+                },
+                {
+                  icon: <Smartphone size={16} style={{ color: '#17cf54' }} />,
+                  label: 'ICCID',
+                  value: assignedIccid
+                    ? assignedIccid.length > 16
+                      ? `${assignedIccid.slice(0, 10)}…${assignedIccid.slice(-4)}`
+                      : assignedIccid
+                    : '—',
+                  sub: assignedIccid ? 'Imported SIM record' : 'Not provided',
                 },
               ].map((s) => (
                 <div

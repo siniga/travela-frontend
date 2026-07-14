@@ -6,16 +6,23 @@ import { useCallback, useEffect, useState } from 'react';
 
 type ActivateEsimButtonProps = {
   userEsimId: number;
+  /** Prefer imported activation value from assignment payload when already known */
+  qrCodeData?: string | null;
   /** Use on dark SIM card background */
   variant?: 'dark' | 'light';
 };
 
 export default function ActivateEsimButton({
   userEsimId,
+  qrCodeData: initialQrCodeData = null,
   variant = 'dark',
 }: ActivateEsimButtonProps) {
-  const [loading, setLoading] = useState(true);
-  const [lpaString, setLpaString] = useState<string | null>(null);
+  const trimmedInitial =
+    typeof initialQrCodeData === 'string' ? initialQrCodeData.trim() : '';
+  const [loading, setLoading] = useState(() => !trimmedInitial);
+  const [qrCodeData, setQrCodeData] = useState<string | null>(
+    trimmedInitial || null
+  );
   const [error, setError] = useState('');
   const [unavailable, setUnavailable] = useState(false);
 
@@ -23,7 +30,7 @@ export default function ActivateEsimButton({
     setLoading(true);
     setError('');
     setUnavailable(false);
-    setLpaString(null);
+    setQrCodeData(null);
 
     try {
       const res = await EsimsApi.getActivation(userEsimId);
@@ -45,7 +52,7 @@ export default function ActivateEsimButton({
         return;
       }
 
-      setLpaString(activation.lpa_string);
+      setQrCodeData(activation.qr_code_data);
     } catch (err: unknown) {
       const message =
         err instanceof Error ? err.message : 'Failed to load activation data.';
@@ -56,12 +63,19 @@ export default function ActivateEsimButton({
   }, [userEsimId]);
 
   useEffect(() => {
+    if (trimmedInitial) {
+      setQrCodeData(trimmedInitial);
+      setLoading(false);
+      setUnavailable(false);
+      setError('');
+      return;
+    }
     void fetchActivation();
-  }, [fetchActivation]);
+  }, [fetchActivation, trimmedInitial]);
 
   const handleActivate = () => {
-    if (!lpaString) return;
-    window.location.href = lpaString;
+    if (!qrCodeData) return;
+    window.location.href = qrCodeData;
   };
 
   const isDark = variant === 'dark';
@@ -99,15 +113,27 @@ export default function ActivateEsimButton({
     );
   }
 
-  if (unavailable || !lpaString) {
+  if (unavailable || !qrCodeData) {
     return (
-      <p
-        className={`mt-5 text-sm text-center py-2 ${
-          isDark ? 'text-white/60' : 'text-slate-500'
-        }`}
-      >
-        eSIM activation is not available.
-      </p>
+      <div className="mt-5 space-y-3">
+        <p
+          className={`text-sm text-center py-2 ${
+            isDark ? 'text-white/60' : 'text-slate-500'
+          }`}
+        >
+          Activation data is not available for this eSIM.
+        </p>
+        <button
+          type="button"
+          disabled
+          className={`w-full flex items-center justify-center gap-2 py-3.5 rounded-xl text-sm font-bold opacity-50 cursor-not-allowed ${
+            isDark ? 'bg-white/10 text-white' : 'bg-slate-100 text-slate-500'
+          }`}
+        >
+          <Smartphone size={16} />
+          Activate eSIM
+        </button>
+      </div>
     );
   }
 
