@@ -1,6 +1,7 @@
 'use client';
 
 import { EsimsApi, parseEsimActivation } from '@/lib/api';
+import { buildEsimActivationHref } from '@/lib/esim-activation';
 import { Loader2, RefreshCw, Smartphone } from 'lucide-react';
 import { useCallback, useEffect, useState } from 'react';
 
@@ -75,7 +76,7 @@ export default function ActivateEsimButton({
 
   const handleActivate = () => {
     if (!qrCodeData) return;
-    window.location.href = qrCodeData;
+    window.location.href = buildEsimActivationHref(qrCodeData);
   };
 
   const isDark = variant === 'dark';
