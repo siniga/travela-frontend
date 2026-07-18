@@ -9,14 +9,63 @@ const PUBLIC_API_BASE =
   process.env.NEXT_PUBLIC_API_URL?.replace(/\/+$/, "") ??
   "https://api.thetravela.com/api";
 
+/** Fired when an authenticated API call returns 401 — listeners should clear the session. */
+export const AUTH_SESSION_EXPIRED = "travela-auth-session-expired";
+
+const DEVICE_ID_KEY = "travela_device_id";
+
+/** Stable per-browser id so logins on other devices do not revoke this session. */
+export function getOrCreateDeviceId(): string {
+  if (typeof window === "undefined") return "web";
+  let id = localStorage.getItem(DEVICE_ID_KEY);
+  if (!id) {
+    id =
+      typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+        ? crypto.randomUUID()
+        : `dev_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`;
+    localStorage.setItem(DEVICE_ID_KEY, id);
+  }
+  return id.slice(0, 120);
+}
+
+function notifySessionExpired() {
+  if (typeof window === "undefined") return;
+  window.dispatchEvent(new Event(AUTH_SESSION_EXPIRED));
+}
+
 function getBearerToken(): string | null {
   if (typeof window === "undefined") return null;
   return localStorage.getItem("token");
 }
 
-function authHeaders(): Record<string, string> {
-  const token = getBearerToken();
-  return token ? { Authorization: `Bearer ${token}` } : {};
+type AuthFetchInit = RequestInit & {
+  /** When false, do not attach Bearer token or handle 401 logout. */
+  auth?: boolean;
+};
+
+/** Authenticated fetch — triggers session expiry handling on 401. */
+async function authFetch(url: string, init: AuthFetchInit = {}): Promise<Response> {
+  const { auth = true, headers: initHeaders, ...rest } = init;
+  const headers = new Headers(initHeaders);
+  if (!headers.has("Accept")) headers.set("Accept", "application/json");
+
+  if (auth) {
+    const token = getBearerToken();
+    if (token) headers.set("Authorization", `Bearer ${token}`);
+  }
+
+  const res = await fetch(url, { ...rest, headers });
+
+  if (auth && res.status === 401 && getBearerToken()) {
+    notifySessionExpired();
+  }
+
+  return res;
+}
+
+async function toApiResult(res: Response): Promise<ApiResult> {
+  const body = await parseResponseBody(res);
+  return { ok: res.ok, status: res.status, body };
 }
 
 async function getJson<T>(url: string): Promise<{ data: T }> {
@@ -171,7 +220,12 @@ export const KycApi = {
 };
 
 export const AuthApi = {
-  /** POST /auth/register — body: { name, email, password } */
+  /** GET /me — validate current bearer token and refresh user payload */
+  me: async (): Promise<ApiResult> => {
+    const res = await authFetch(`${PUBLIC_API_BASE}/me`);
+    return toApiResult(res);
+  },
+  /** POST /auth/register — body: { name, email, password, device? } */
   register: async (data: { name: string; email: string; password: string }): Promise<RegisterResult> => {
     const res = await fetch(`${PUBLIC_API_BASE}/auth/register`, {
       method: "POST",
@@ -179,7 +233,7 @@ export const AuthApi = {
         Accept: "application/json",
         "Content-Type": "application/json",
       },
-      body: JSON.stringify(data),
+      body: JSON.stringify({ ...data, device: getOrCreateDeviceId() }),
     });
     const body = await parseResponseBody(res);
     return { ok: res.ok, status: res.status, body };
@@ -192,7 +246,7 @@ export const AuthApi = {
         Accept: "application/json",
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({ ...data, device: data.device ?? "web" }),
+      body: JSON.stringify({ ...data, device: data.device ?? getOrCreateDeviceId() }),
     });
     const body = await parseResponseBody(res);
     return { ok: res.ok, status: res.status, body };
@@ -225,75 +279,48 @@ export const AuthApi = {
   },
   /** POST /auth/verify-email — body: { email, code } */
   verifyEmail: async (data: { email: string; code: string }): Promise<ApiResult> => {
-    const res = await fetch(`${PUBLIC_API_BASE}/auth/verify-email`, {
+    const res = await authFetch(`${PUBLIC_API_BASE}/auth/verify-email`, {
       method: "POST",
-      headers: {
-        Accept: "application/json",
-        "Content-Type": "application/json",
-        ...authHeaders(),
-      },
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify(data),
+      auth: Boolean(getBearerToken()),
     });
-    const body = await parseResponseBody(res);
-    return { ok: res.ok, status: res.status, body };
+    return toApiResult(res);
   },
   /** POST /auth/email/resend — resend verification email (auth required) */
   resendVerificationEmail: async (): Promise<ApiResult> => {
-    const res = await fetch(`${PUBLIC_API_BASE}/auth/email/resend`, {
+    const res = await authFetch(`${PUBLIC_API_BASE}/auth/email/resend`, {
       method: "POST",
-      headers: {
-        Accept: "application/json",
-        "Content-Type": "application/json",
-        ...authHeaders(),
-      },
-      // Some Laravel setups expect a JSON request body even if empty.
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({}),
     });
-    const body = await parseResponseBody(res);
-    return { ok: res.ok, status: res.status, body };
+    return toApiResult(res);
   },
   /** POST /auth/send-verification-email — body: { email } */
   sendVerificationEmail: async (data: { email: string }): Promise<ApiResult> => {
-    const res = await fetch(`${PUBLIC_API_BASE}/auth/send-verification-email`, {
+    const res = await authFetch(`${PUBLIC_API_BASE}/auth/send-verification-email`, {
       method: "POST",
-      headers: {
-        Accept: "application/json",
-        "Content-Type": "application/json",
-        ...authHeaders(),
-      },
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify(data),
     });
-    const body = await parseResponseBody(res);
-    return { ok: res.ok, status: res.status, body };
+    return toApiResult(res);
   },
 };
 
 export const OrderApi = {
   /** GET /me/orders — list orders for the signed-in user */
   listMine: async (): Promise<ApiResult> => {
-    const res = await fetch(`${PUBLIC_API_BASE}/me/orders`, {
-      method: "GET",
-      headers: {
-        Accept: "application/json",
-        ...authHeaders(),
-      },
-    });
-    const body = await parseResponseBody(res);
-    return { ok: res.ok, status: res.status, body };
+    const res = await authFetch(`${PUBLIC_API_BASE}/me/orders`);
+    return toApiResult(res);
   },
   /** POST /orders */
   create: async (payload: unknown): Promise<ApiResult> => {
-    const res = await fetch(`${PUBLIC_API_BASE}/orders`, {
+    const res = await authFetch(`${PUBLIC_API_BASE}/orders`, {
       method: "POST",
-      headers: {
-        Accept: "application/json",
-        "Content-Type": "application/json",
-        ...authHeaders(),
-      },
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
     });
-    const body = await parseResponseBody(res);
-    return { ok: res.ok, status: res.status, body };
+    return toApiResult(res);
   },
   // TODO: GET /orders/:draftId
   getByDraftId: async (_draftId: string) => ({ data: {} }),
@@ -341,65 +368,34 @@ export type EsimActivationData = {
 export const EsimsApi = {
   /** GET /me/esims — eSIM details for the signed-in user */
   listMine: async (): Promise<ApiResult> => {
-    const res = await fetch(`${PUBLIC_API_BASE}/me/esims`, {
-      method: "GET",
-      headers: {
-        Accept: "application/json",
-        ...authHeaders(),
-      },
-    });
-    const body = await parseResponseBody(res);
-    return { ok: res.ok, status: res.status, body };
+    const res = await authFetch(`${PUBLIC_API_BASE}/me/esims`);
+    return toApiResult(res);
   },
   /** GET /me/esims/assignment-status — check whether a SIM has been assigned */
   assignmentStatus: async (): Promise<ApiResult> => {
-    const res = await fetch(`${PUBLIC_API_BASE}/me/esims/assignment-status`, {
-      method: "GET",
-      headers: {
-        Accept: "application/json",
-        ...authHeaders(),
-      },
-    });
-    const body = await parseResponseBody(res);
-    return { ok: res.ok, status: res.status, body };
+    const res = await authFetch(`${PUBLIC_API_BASE}/me/esims/assignment-status`);
+    return toApiResult(res);
   },
   /** POST /me/esims/register — assign a free SIM from inventory (auth required) */
   register: async (): Promise<ApiResult> => {
-    const res = await fetch(`${PUBLIC_API_BASE}/me/esims/register`, {
+    const res = await authFetch(`${PUBLIC_API_BASE}/me/esims/register`, {
       method: "POST",
-      headers: {
-        Accept: "application/json",
-        "Content-Type": "application/json",
-        ...authHeaders(),
-      },
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({}),
     });
-    const body = await parseResponseBody(res);
-    return { ok: res.ok, status: res.status, body };
+    return toApiResult(res);
   },
   /** GET /me/esims/{userEsimId}/activation — qr_code_data for device eSIM install */
   getActivation: async (userEsimId: number): Promise<ApiResult> => {
-    const res = await fetch(`${PUBLIC_API_BASE}/me/esims/${userEsimId}/activation`, {
-      method: "GET",
-      headers: {
-        Accept: "application/json",
-        ...authHeaders(),
-      },
-    });
-    const body = await parseResponseBody(res);
-    return { ok: res.ok, status: res.status, body };
+    const res = await authFetch(`${PUBLIC_API_BASE}/me/esims/${userEsimId}/activation`);
+    return toApiResult(res);
   },
   /** POST /me/esims/{userEsimId}/device-activated — record eSIM installed on device */
   markDeviceActivated: async (userEsimId: number): Promise<ApiResult> => {
-    const res = await fetch(`${PUBLIC_API_BASE}/me/esims/${userEsimId}/device-activated`, {
+    const res = await authFetch(`${PUBLIC_API_BASE}/me/esims/${userEsimId}/device-activated`, {
       method: "POST",
-      headers: {
-        Accept: "application/json",
-        ...authHeaders(),
-      },
     });
-    const body = await parseResponseBody(res);
-    return { ok: res.ok, status: res.status, body };
+    return toApiResult(res);
   },
 };
 

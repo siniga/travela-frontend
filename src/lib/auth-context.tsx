@@ -1,10 +1,11 @@
 'use client';
 
 import {
-  apiErrorMessage,
+  AUTH_SESSION_EXPIRED,
   AuthApi,
   extractAuthTokenFromBody,
   extractUserFromAuthBody,
+  apiErrorMessage,
 } from '@/lib/api';
 import React, {
   createContext,
@@ -36,25 +37,34 @@ const AuthContext = createContext<AuthContextValue | null>(null);
 /** Dispatched when auth keys in localStorage change in the same tab. */
 export const AUTH_STORAGE_SYNC = 'travela-auth-storage-sync';
 
+function readStoredUser(): User | null {
+  if (typeof window === 'undefined') return null;
+  const storedUser = localStorage.getItem('user');
+  if (!storedUser) return null;
+  try {
+    return JSON.parse(storedUser) as User;
+  } catch {
+    return null;
+  }
+}
+
 // Simulated delay to mimic a real network request (register only)
 const delay = (ms = 800) => new Promise((r) => setTimeout(r, ms));
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
-  const [user, setUser] = useState<User | null>(() => {
-    if (typeof window === 'undefined') return null;
-    const storedUser = localStorage.getItem('user');
-    if (!storedUser) return null;
-    try {
-      return JSON.parse(storedUser) as User;
-    } catch {
-      return null;
-    }
-  });
-  const [token, setToken] = useState<string | null>(() => {
-    if (typeof window === 'undefined') return null;
-    return localStorage.getItem('token');
-  });
+  const [user, setUser] = useState<User | null>(null);
+  const [token, setToken] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+
+  const clearSession = useCallback(() => {
+    localStorage.removeItem('token');
+    localStorage.removeItem('user');
+    localStorage.removeItem('lastPurchase');
+    localStorage.removeItem('pendingPayment');
+    setToken(null);
+    setUser(null);
+    window.dispatchEvent(new Event(AUTH_STORAGE_SYNC));
+  }, []);
 
   const persistSession = useCallback((authToken: string, authUser: User) => {
     localStorage.setItem('token', authToken);
@@ -64,24 +74,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     window.dispatchEvent(new Event(AUTH_STORAGE_SYNC));
   }, []);
 
+  const logout = useCallback(() => {
+    clearSession();
+  }, [clearSession]);
+
   useEffect(() => {
+    let cancelled = false;
+
     const syncFromStorage = () => {
-      const storedToken = localStorage.getItem('token');
-      const storedUser = localStorage.getItem('user');
-
-      setToken(storedToken);
-      if (storedUser) {
-        try {
-          setUser(JSON.parse(storedUser));
-        } catch {
-          setUser(null);
-        }
-      } else {
-        setUser(null);
-      }
+      if (cancelled) return;
+      setToken(localStorage.getItem('token'));
+      setUser(readStoredUser());
     };
-
-    syncFromStorage();
 
     const onStorage = (e: StorageEvent) => {
       if (e.key === 'token' || e.key === 'user' || e.key === null) {
@@ -89,16 +93,60 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
     };
     const onAuthSync = () => syncFromStorage();
+    const onSessionExpired = () => clearSession();
 
     window.addEventListener('storage', onStorage);
     window.addEventListener(AUTH_STORAGE_SYNC, onAuthSync);
-    setIsLoading(false);
+    window.addEventListener(AUTH_SESSION_EXPIRED, onSessionExpired);
+
+    async function bootstrapSession() {
+      const storedToken = localStorage.getItem('token');
+
+      if (!storedToken) {
+        setToken(null);
+        setUser(null);
+        setIsLoading(false);
+        return;
+      }
+
+      setToken(storedToken);
+      setUser(readStoredUser());
+
+      const result = await AuthApi.me();
+      if (cancelled) return;
+
+      if (result.ok) {
+        const apiUser = extractUserFromAuthBody(result.body);
+        const cached = readStoredUser();
+        const merged: User = {
+          ...cached,
+          id: apiUser?.id ?? cached?.id,
+          name: apiUser?.name ?? cached?.name,
+          email: apiUser?.email ?? cached?.email,
+          email_verified: apiUser?.email_verified ?? cached?.email_verified,
+        };
+        localStorage.setItem('user', JSON.stringify(merged));
+        setUser(merged);
+        setIsLoading(false);
+        return;
+      }
+
+      if (result.status === 401) {
+        clearSession();
+      }
+
+      setIsLoading(false);
+    }
+
+    void bootstrapSession();
 
     return () => {
+      cancelled = true;
       window.removeEventListener('storage', onStorage);
       window.removeEventListener(AUTH_STORAGE_SYNC, onAuthSync);
+      window.removeEventListener(AUTH_SESSION_EXPIRED, onSessionExpired);
     };
-  }, []);
+  }, [clearSession]);
 
   const login = useCallback(
     async (email: string, password: string) => {
@@ -149,16 +197,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     };
     persistSession(mockToken, mockUser);
   }, [persistSession]);
-
-  const logout = useCallback(() => {
-    localStorage.removeItem('token');
-    localStorage.removeItem('user');
-    localStorage.removeItem('lastPurchase');
-    localStorage.removeItem('pendingPayment');
-    setToken(null);
-    setUser(null);
-    window.dispatchEvent(new Event(AUTH_STORAGE_SYNC));
-  }, []);
 
   return (
     <AuthContext.Provider

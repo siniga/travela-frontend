@@ -541,6 +541,10 @@ export default function DashboardPage() {
     try {
       const res = await OrderApi.listMine();
       if (!res.ok) {
+        if (res.status === 401) {
+          setOrders([]);
+          return;
+        }
         setOrders([]);
         return;
       }
@@ -557,6 +561,11 @@ export default function DashboardPage() {
     try {
       const res = await EsimsApi.listMine();
       if (!res.ok) {
+        if (res.status === 401) {
+          setUserEsims([]);
+          setLatestOrderBundle(null);
+          return;
+        }
         const msg =
           res.body &&
           typeof res.body === 'object' &&
@@ -736,6 +745,10 @@ export default function DashboardPage() {
           if (signal.cancelled) return;
 
           if (!statusRes.ok) {
+            if (statusRes.status === 401) {
+              setAssignmentLoading(false);
+              return;
+            }
             const msg =
               statusRes.body &&
               typeof statusRes.body === 'object' &&
