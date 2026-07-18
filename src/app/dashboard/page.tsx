@@ -192,6 +192,7 @@ interface UserEsimRecord {
   balance?: string | null;
   balance_currency?: string | null;
   balance_fetched_at?: string | null;
+  device_activated_at?: string | null;
   created_at?: string | null;
   esim?: EsimDetail | null;
   bundle?: BundleDetail | null;
@@ -497,6 +498,15 @@ function simStatusLabel(status?: string | null) {
   return isSimActive(status) ? 'Active' : 'Inactive';
 }
 
+function esimDeviceStatusLabel(
+  userEsim: UserEsimRecord | null,
+  simStatus?: string | null
+) {
+  if (userEsim?.device_activated_at) return 'Active';
+  if (isSimActive(simStatus)) return 'Ready to activate';
+  return 'Inactive';
+}
+
 function formatMsisdn(msisdn?: string | null) {
   if (!msisdn) return null;
   return msisdn.startsWith('+') ? msisdn : `+${msisdn}`;
@@ -699,6 +709,19 @@ export default function DashboardPage() {
   }, [isAuthenticated, loadOrders]);
 
   useEffect(() => {
+    if (!isAuthenticated) return;
+
+    const refreshEsims = () => void loadEsims();
+    window.addEventListener('focus', refreshEsims);
+    window.addEventListener('pageshow', refreshEsims);
+
+    return () => {
+      window.removeEventListener('focus', refreshEsims);
+      window.removeEventListener('pageshow', refreshEsims);
+    };
+  }, [isAuthenticated, loadEsims]);
+
+  useEffect(() => {
     if (!isAuthenticated || ordersLoading) return;
 
     const signal: WatcherSignal = { cancelled: false };
@@ -843,10 +866,15 @@ export default function DashboardPage() {
   );
 
   const simType = primaryUserEsim?.esim?.sim_type ?? assignedSim?.esim?.sim_type ?? 'esim';
-  const simStatus = primaryUserEsim?.esim?.status ?? assignedSim?.esim?.status ?? null;
-  const simIsActive = isSimActive(simStatus);
-  const simTypeTitle = simTypeLabel(simType);
   const isEsimType = simType.toLowerCase() !== 'physical';
+  const simStatus = primaryUserEsim?.esim?.status ?? assignedSim?.esim?.status ?? null;
+  const simIsActive = isEsimType
+    ? Boolean(primaryUserEsim?.device_activated_at)
+    : isSimActive(simStatus);
+  const simStatusDisplay = isEsimType
+    ? esimDeviceStatusLabel(primaryUserEsim, simStatus)
+    : simStatusLabel(simStatus);
+  const simTypeTitle = simTypeLabel(simType);
 
   const hasActiveEsim =
     Boolean(assignedMsisdn) || userEsims.length > 0;
@@ -1211,7 +1239,7 @@ export default function DashboardPage() {
                       : { backgroundColor: 'rgba(255,255,255,0.15)', color: 'rgba(255,255,255,0.8)' }
                   }
                 >
-                  {simStatusLabel(simStatus)}
+                  {simStatusDisplay}
                 </span>
               </div>
 
@@ -1236,7 +1264,18 @@ export default function DashboardPage() {
                 <ActivateEsimButton
                   userEsimId={primaryUserEsim.id}
                   qrCodeData={assignedQrCodeData}
+                  deviceActivatedAt={primaryUserEsim.device_activated_at}
+                  msisdn={assignedMsisdn}
                   variant="dark"
+                  onActivated={(activatedAt) => {
+                    setUserEsims((prev) =>
+                      prev.map((row) =>
+                        row.id === primaryUserEsim.id
+                          ? { ...row, device_activated_at: activatedAt }
+                          : row
+                      )
+                    );
+                  }}
                 />
               )}
 
@@ -1262,7 +1301,9 @@ export default function DashboardPage() {
                   ),
                   label: 'SIM Type',
                   value: simTypeTitle,
-                  sub: simStatusLabel(simStatus),
+                  sub: isEsimType
+                    ? esimDeviceStatusLabel(primaryUserEsim, simStatus)
+                    : simStatusLabel(simStatus),
                 },
                 {
                   icon: <Globe size={16} style={{ color: '#17cf54' }} />,

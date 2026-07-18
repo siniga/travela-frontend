@@ -2,30 +2,54 @@
 
 import { EsimsApi, parseEsimActivation } from '@/lib/api';
 import { buildEsimActivationHref } from '@/lib/esim-activation';
-import { Loader2, RefreshCw, Smartphone } from 'lucide-react';
+import { CheckCircle, Loader2, RefreshCw, Smartphone } from 'lucide-react';
 import { useCallback, useEffect, useState } from 'react';
 
 type ActivateEsimButtonProps = {
   userEsimId: number;
   /** Prefer imported activation value from assignment payload when already known */
   qrCodeData?: string | null;
+  /** ISO timestamp from API — eSIM profile installed on user's device */
+  deviceActivatedAt?: string | null;
+  /** Shown in the activated state */
+  msisdn?: string | null;
   /** Use on dark SIM card background */
   variant?: 'dark' | 'light';
+  /** Called after the server records device activation */
+  onActivated?: (deviceActivatedAt: string) => void;
 };
+
+function formatMsisdn(msisdn?: string | null) {
+  if (!msisdn) return null;
+  const trimmed = msisdn.trim();
+  if (!trimmed) return null;
+  return trimmed.startsWith('+') ? trimmed : `+${trimmed}`;
+}
 
 export default function ActivateEsimButton({
   userEsimId,
   qrCodeData: initialQrCodeData = null,
+  deviceActivatedAt: initialDeviceActivatedAt = null,
+  msisdn = null,
   variant = 'dark',
+  onActivated,
 }: ActivateEsimButtonProps) {
   const trimmedInitial =
     typeof initialQrCodeData === 'string' ? initialQrCodeData.trim() : '';
   const [loading, setLoading] = useState(() => !trimmedInitial);
+  const [activating, setActivating] = useState(false);
   const [qrCodeData, setQrCodeData] = useState<string | null>(
     trimmedInitial || null
   );
+  const [deviceActivatedAt, setDeviceActivatedAt] = useState<string | null>(
+    initialDeviceActivatedAt ?? null
+  );
   const [error, setError] = useState('');
   const [unavailable, setUnavailable] = useState(false);
+
+  useEffect(() => {
+    setDeviceActivatedAt(initialDeviceActivatedAt ?? null);
+  }, [initialDeviceActivatedAt]);
 
   const fetchActivation = useCallback(async () => {
     setLoading(true);
@@ -74,12 +98,86 @@ export default function ActivateEsimButton({
     void fetchActivation();
   }, [fetchActivation, trimmedInitial]);
 
-  const handleActivate = () => {
-    if (!qrCodeData) return;
-    window.location.href = buildEsimActivationHref(qrCodeData);
+  const handleActivate = async () => {
+    if (!qrCodeData || activating) return;
+
+    setActivating(true);
+    setError('');
+
+    try {
+      const res = await EsimsApi.markDeviceActivated(userEsimId);
+      if (!res.ok) {
+        const message =
+          res.body &&
+          typeof res.body === 'object' &&
+          typeof (res.body as { message?: unknown }).message === 'string'
+            ? String((res.body as { message: string }).message)
+            : `Could not record activation (HTTP ${res.status}).`;
+        setError(message);
+        return;
+      }
+
+      const body = res.body as Record<string, unknown> | null;
+      const data =
+        body?.data && typeof body.data === 'object' && !Array.isArray(body.data)
+          ? (body.data as Record<string, unknown>)
+          : null;
+      const activatedAt =
+        typeof data?.device_activated_at === 'string'
+          ? data.device_activated_at
+          : new Date().toISOString();
+
+      setDeviceActivatedAt(activatedAt);
+      onActivated?.(activatedAt);
+      window.location.href = buildEsimActivationHref(qrCodeData);
+    } catch (err: unknown) {
+      const message =
+        err instanceof Error ? err.message : 'Failed to start activation.';
+      setError(message);
+    } finally {
+      setActivating(false);
+    }
   };
 
   const isDark = variant === 'dark';
+  const formattedMsisdn = formatMsisdn(msisdn);
+
+  if (deviceActivatedAt) {
+    return (
+      <div
+        className={`mt-5 rounded-xl border px-4 py-3.5 ${
+          isDark
+            ? 'border-emerald-400/30 bg-emerald-500/10'
+            : 'border-emerald-200 bg-emerald-50'
+        }`}
+      >
+        <div className="flex items-start gap-3">
+          <CheckCircle
+            size={20}
+            className={isDark ? 'text-emerald-300 mt-0.5 flex-shrink-0' : 'text-emerald-600 mt-0.5 flex-shrink-0'}
+          />
+          <div>
+            <p
+              className={`text-sm font-extrabold ${
+                isDark ? 'text-emerald-100' : 'text-emerald-900'
+              }`}
+            >
+              eSIM active on your device
+            </p>
+            {formattedMsisdn ? (
+              <p className={`text-sm mt-1 ${isDark ? 'text-white/75' : 'text-emerald-800'}`}>
+                Your number <span className="font-bold">{formattedMsisdn}</span> is ready to use.
+              </p>
+            ) : (
+              <p className={`text-sm mt-1 ${isDark ? 'text-white/70' : 'text-emerald-700'}`}>
+                This eSIM has been installed on your device.
+              </p>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   if (loading) {
     return (
@@ -141,14 +239,24 @@ export default function ActivateEsimButton({
   return (
     <button
       type="button"
-      onClick={handleActivate}
-      className={`mt-5 w-full flex items-center justify-center gap-2 py-3.5 rounded-xl text-sm font-bold transition-opacity hover:opacity-90 ${
+      onClick={() => void handleActivate()}
+      disabled={activating}
+      className={`mt-5 w-full flex items-center justify-center gap-2 py-3.5 rounded-xl text-sm font-bold transition-opacity hover:opacity-90 disabled:opacity-60 ${
         isDark ? '' : 'shadow-sm'
       }`}
       style={{ backgroundColor: '#17cf54', color: '#112116' }}
     >
-      <Smartphone size={16} />
-      Activate eSIM
+      {activating ? (
+        <>
+          <Loader2 size={16} className="animate-spin" />
+          Starting activation…
+        </>
+      ) : (
+        <>
+          <Smartphone size={16} />
+          Activate eSIM
+        </>
+      )}
     </button>
   );
 }

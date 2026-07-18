@@ -389,6 +389,18 @@ export const EsimsApi = {
     const body = await parseResponseBody(res);
     return { ok: res.ok, status: res.status, body };
   },
+  /** POST /me/esims/{userEsimId}/device-activated — record eSIM installed on device */
+  markDeviceActivated: async (userEsimId: number): Promise<ApiResult> => {
+    const res = await fetch(`${PUBLIC_API_BASE}/me/esims/${userEsimId}/device-activated`, {
+      method: "POST",
+      headers: {
+        Accept: "application/json",
+        ...authHeaders(),
+      },
+    });
+    const body = await parseResponseBody(res);
+    return { ok: res.ok, status: res.status, body };
+  },
 };
 
 /** Parse GET /me/esims/{id}/activation response — activation value is `qr_code_data` only. */
