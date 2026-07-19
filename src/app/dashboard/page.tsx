@@ -193,6 +193,7 @@ interface UserEsimRecord {
   balance_currency?: string | null;
   balance_fetched_at?: string | null;
   device_activated_at?: string | null;
+  activation_email_sent_at?: string | null;
   created_at?: string | null;
   esim?: EsimDetail | null;
   bundle?: BundleDetail | null;
@@ -858,6 +859,12 @@ export default function DashboardPage() {
       ? assignedSim.esim.qr_code_data.trim()
       : '') ||
     null;
+  const hasActivationData =
+    Boolean(assignedQrCodeData) ||
+    primaryUserEsim?.esim?.has_activation_data === true ||
+    assignedSim?.esim?.has_activation_data === true;
+  const activationEmailSentAt =
+    primaryUserEsim?.activation_email_sent_at ?? null;
   const assignedBundleName =
     apiBundle?.alias ??
     apiBundle?.name ??
@@ -1291,6 +1298,28 @@ export default function DashboardPage() {
                   }}
                 />
               )}
+
+              {isEsimType &&
+                !primaryUserEsim?.device_activated_at &&
+                hasActivationData &&
+                user?.email && (
+                  <p className="mt-4 text-sm text-white/70 leading-relaxed text-center px-1">
+                    Prefer to scan a QR code?{' '}
+                    {activationEmailSentAt ? (
+                      <>
+                        We sent your activation QR to{' '}
+                        <span className="font-semibold text-white">{user.email}</span>.
+                        Check your inbox and spam folder.
+                      </>
+                    ) : (
+                      <>
+                        We&apos;ll email your activation QR to{' '}
+                        <span className="font-semibold text-white">{user.email}</span>{' '}
+                        shortly. You can also tap <strong className="text-white">Activate eSIM</strong> above.
+                      </>
+                    )}
+                  </p>
+                )}
 
               {totalEsims > 1 && (
                 <div

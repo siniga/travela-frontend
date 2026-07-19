@@ -332,6 +332,7 @@ export const OrderApi = {
 
 export type EsimAssignmentPayload = {
   id?: number;
+  activation_email_sent_at?: string | null;
   esim?: {
     id?: number;
     msisdn?: string | null;
