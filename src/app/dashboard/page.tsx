@@ -10,6 +10,7 @@ import {
   type EsimAssignmentStatus,
 } from '@/lib/api';
 import { useAuth } from '@/lib/auth-context';
+import { buildEsimQrPageHref } from '@/lib/esim-activation';
 import {
   CheckCircle,
   Clock,
@@ -1300,22 +1301,36 @@ export default function DashboardPage() {
               )}
 
               {isEsimType &&
+                primaryUserEsim?.id &&
+                !primaryUserEsim?.device_activated_at &&
+                hasActivationData && (
+                  <a
+                    href={buildEsimQrPageHref(primaryUserEsim.id)}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="mt-3 w-full flex items-center justify-center gap-2 py-3 rounded-xl text-sm font-bold border border-white/25 text-white hover:bg-white/10 transition-colors"
+                  >
+                    Open QR code
+                  </a>
+                )}
+
+              {isEsimType &&
                 !primaryUserEsim?.device_activated_at &&
                 hasActivationData &&
                 user?.email && (
                   <p className="mt-4 text-sm text-white/70 leading-relaxed text-center px-1">
-                    Prefer to scan a QR code?{' '}
                     {activationEmailSentAt ? (
                       <>
-                        We sent your activation QR to{' '}
+                        We sent activation details to{' '}
                         <span className="font-semibold text-white">{user.email}</span>.
-                        Check your inbox and spam folder.
+                        Open your QR code above when you&apos;re ready to install.
                       </>
                     ) : (
                       <>
-                        We&apos;ll email your activation QR to{' '}
+                        We&apos;ll email activation details to{' '}
                         <span className="font-semibold text-white">{user.email}</span>{' '}
-                        shortly. You can also tap <strong className="text-white">Activate eSIM</strong> above.
+                        shortly. Use <strong className="text-white">Open QR code</strong> or{' '}
+                        <strong className="text-white">Activate eSIM</strong> above when ready.
                       </>
                     )}
                   </p>
