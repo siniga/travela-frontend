@@ -145,7 +145,7 @@ export default function ActivateEsimButton({
   if (deviceActivatedAt) {
     return (
       <div
-        className={`mt-5 rounded-xl border px-4 py-3.5 ${
+        className={`rounded-xl border px-4 py-3.5 ${
           isDark
             ? 'border-emerald-400/30 bg-emerald-500/10'
             : 'border-emerald-200 bg-emerald-50'
@@ -182,7 +182,7 @@ export default function ActivateEsimButton({
   if (loading) {
     return (
       <div
-        className={`mt-5 flex items-center justify-center gap-2 py-3.5 rounded-xl text-sm font-semibold ${
+        className={`flex items-center justify-center gap-2 py-3.5 rounded-xl text-sm font-semibold ${
           isDark ? 'bg-white/10 text-white/80' : 'bg-slate-100 text-slate-500'
         }`}
       >
@@ -194,7 +194,7 @@ export default function ActivateEsimButton({
 
   if (error) {
     return (
-      <div className="mt-5 space-y-3">
+      <div className="space-y-3">
         <p className={`text-sm ${isDark ? 'text-red-200' : 'text-red-600'}`}>{error}</p>
         <button
           type="button"
@@ -214,7 +214,7 @@ export default function ActivateEsimButton({
 
   if (unavailable || !qrCodeData) {
     return (
-      <div className="mt-5 space-y-3">
+      <div className="space-y-3">
         <p
           className={`text-sm text-center py-2 ${
             isDark ? 'text-white/60' : 'text-slate-500'
@@ -241,7 +241,7 @@ export default function ActivateEsimButton({
       type="button"
       onClick={() => void handleActivate()}
       disabled={activating}
-      className={`mt-5 w-full flex items-center justify-center gap-2 py-3.5 rounded-xl text-sm font-bold transition-opacity hover:opacity-90 disabled:opacity-60 ${
+      className={`w-full flex items-center justify-center gap-2 py-3.5 rounded-xl text-sm font-bold transition-opacity hover:opacity-90 disabled:opacity-60 ${
         isDark ? '' : 'shadow-sm'
       }`}
       style={{ backgroundColor: '#17cf54', color: '#112116' }}
