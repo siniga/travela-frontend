@@ -4,7 +4,7 @@ import { ArrowRight, Loader2, Package, ShoppingCart, Smartphone, Wifi } from 'lu
 import Image from 'next/image';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Suspense, useEffect, useState } from 'react';
-import { BundlesApi } from '@/lib/api';
+import { BundlesApi, EsimsApi } from '@/lib/api';
 
 interface Bundle {
   id: string | number;
@@ -114,7 +114,7 @@ function BundlesContent() {
     return sum + Number(b?.price ?? 0) * qty;
   }, 0);
 
-  const handleCheckout = () => {
+  const handleCheckout = async () => {
     const cartBundles = Object.entries(cart)
       .filter(([, qty]) => qty > 0)
       .map(([id, qty]) => ({
@@ -125,9 +125,53 @@ function BundlesContent() {
     const checkoutMode: CheckoutMode =
       topupParam === '1' || isRegisteredCustomer ? 'topup' : 'standard';
 
+    let user_esim_id: number | undefined;
+    let msisdn: string | undefined;
+
+    if (checkoutMode === 'topup') {
+      try {
+        const res = await EsimsApi.listMine();
+        if (!res.ok) {
+          window.alert('Could not load your SIM. Try again from the dashboard.');
+          return;
+        }
+        const body = res.body as { data?: unknown[]; esims?: unknown[] } | unknown[];
+        const rows = Array.isArray(body)
+          ? body
+          : Array.isArray(body?.data)
+            ? body.data
+            : Array.isArray(body?.esims)
+              ? body.esims
+              : [];
+        const first = rows[0] as {
+          id?: number;
+          esim?: { msisdn?: string | null; phone_number?: string | null };
+        } | undefined;
+        user_esim_id = first?.id;
+        msisdn =
+          first?.esim?.msisdn?.trim() ||
+          first?.esim?.phone_number?.trim() ||
+          undefined;
+        if (!user_esim_id || !msisdn) {
+          window.alert('No SIM found on your account. Complete your first purchase first.');
+          return;
+        }
+      } catch {
+        window.alert('Could not load your SIM. Try again from the dashboard.');
+        return;
+      }
+    }
+
     localStorage.setItem(
       'cart',
-      JSON.stringify({ items: cartBundles, country, countryName, simType, checkoutMode })
+      JSON.stringify({
+        items: cartBundles,
+        country,
+        countryName,
+        simType,
+        checkoutMode,
+        ...(checkoutMode === 'topup' ? { user_esim_id, msisdn } : {}),
+      })
     );
     router.push('/checkout');
   };

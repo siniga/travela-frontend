@@ -670,6 +670,16 @@ export default function DashboardPage() {
       if (topUpModalClosing) return;
 
       const activeEsim = userEsims[0] ?? null;
+      const msisdn =
+        activeEsim?.esim?.msisdn?.trim() ||
+        activeEsim?.esim?.phone_number?.trim() ||
+        '';
+
+      if (!activeEsim?.id || !msisdn) {
+        window.alert('No SIM found on your account. Complete your first purchase first.');
+        return;
+      }
+
       const country = activeEsim?.order?.metadata?.country ?? 'TZ';
       const countryName =
         activeEsim?.order?.metadata?.countryName ??
@@ -686,6 +696,8 @@ export default function DashboardPage() {
           countryName,
           simType,
           checkoutMode: 'topup',
+          user_esim_id: activeEsim.id,
+          msisdn,
         })
       );
       sessionStorage.setItem(CHECKOUT_TRANSITION_KEY, 'topup-modal');

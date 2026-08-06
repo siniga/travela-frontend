@@ -50,6 +50,9 @@ interface Cart {
   /** YYYY-MM-DD — end of trip / leaving destination */
   tripDepartureDate?: string;
   checkoutMode?: 'standard' | 'topup';
+  /** Required for top-up: user's assigned SIM */
+  user_esim_id?: number;
+  msisdn?: string;
 }
 
 function formatMb(mb?: number) {
@@ -75,8 +78,17 @@ const STEPS: { id: Step; label: string }[] = [
 ];
 
 function apiErrorMessage(body: unknown, fallback: string): string {
-  if (body && typeof body === 'object' && typeof (body as { message?: unknown }).message === 'string') {
-    return String((body as { message: string }).message);
+  if (!body || typeof body !== 'object') return fallback;
+  const record = body as { message?: unknown; errors?: Record<string, unknown> };
+  if (typeof record.message === 'string' && record.message.trim()) {
+    return record.message;
+  }
+  const errors = record.errors;
+  if (errors && typeof errors === 'object') {
+    for (const value of Object.values(errors)) {
+      if (Array.isArray(value) && typeof value[0] === 'string') return value[0];
+      if (typeof value === 'string') return value;
+    }
   }
   return fallback;
 }
@@ -530,10 +542,16 @@ export default function CheckoutPage() {
     const departure = cart.tripDepartureDate ?? fallbackDeparture;
     const duration = tripInclusiveDays(arrival, departure);
 
+    const topUp = cart.checkoutMode === 'topup' || isTopUpFlow;
+
     return {
       draft_id: orderDraftId,
       user_id: userId,
       checkoutMode: cart.checkoutMode ?? (isTopUpFlow ? 'topup' : 'standard'),
+      ...(topUp && cart.user_esim_id
+        ? { user_esim_id: cart.user_esim_id }
+        : {}),
+      ...(topUp && cart.msisdn ? { msisdn: cart.msisdn } : {}),
       country: cart.country,
       countryName: cart.countryName,
       simType: cart.simType,
@@ -585,6 +603,12 @@ export default function CheckoutPage() {
       typeof window !== 'undefined' ? localStorage.getItem('token') : null;
     if (!token) {
       setStep('register');
+      return;
+    }
+
+    if (isTopUpFlow && (!cart?.user_esim_id || !cart?.msisdn)) {
+      alert('Select the SIM to top up from your dashboard, then try again.');
+      router.push('/dashboard');
       return;
     }
 
