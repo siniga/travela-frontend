@@ -11,6 +11,9 @@ import {
 } from '@/lib/api';
 import { useAuth } from '@/lib/auth-context';
 import { buildEsimQrPageHref } from '@/lib/esim-activation';
+import { getOptimisticDataMb } from '@/lib/balance-poll';
+import { dataMbFromAssignment } from '@/lib/esim-balance';
+import { useBalancePoll } from '@/hooks/useBalancePoll';
 import {
   CheckCircle,
   Clock,
@@ -193,6 +196,7 @@ interface UserEsimRecord {
   balance?: string | null;
   balance_currency?: string | null;
   balance_fetched_at?: string | null;
+  balances?: Record<string, unknown> | null;
   device_activated_at?: string | null;
   activation_email_sent_at?: string | null;
   created_at?: string | null;
@@ -591,6 +595,15 @@ export default function DashboardPage() {
     }
   }, []);
 
+  const loadEsimsRef = useRef(loadEsims);
+  loadEsimsRef.current = loadEsims;
+
+  const { isPolling: balancePolling, optimisticDataMb, confirmedDataMb } = useBalancePoll({
+    onBalanceReady: () => {
+      void loadEsimsRef.current();
+    },
+  });
+
   const applyAssignedSim = useCallback(
     (payload: EsimAssignmentPayload | undefined) => {
       if (payload) setAssignedSim(payload);
@@ -688,6 +701,9 @@ export default function DashboardPage() {
       const simType =
         activeEsim?.esim?.sim_type === 'physical' ? 'physical' : 'esim';
 
+      const currentDataMb =
+        getOptimisticDataMb() ?? dataMbFromAssignment(activeEsim) ?? 0;
+
       localStorage.setItem(
         'cart',
         JSON.stringify({
@@ -698,6 +714,7 @@ export default function DashboardPage() {
           checkoutMode: 'topup',
           user_esim_id: activeEsim.id,
           msisdn,
+          current_data_mb: currentDataMb,
         })
       );
       sessionStorage.setItem(CHECKOUT_TRANSITION_KEY, 'topup-modal');
@@ -898,6 +915,25 @@ export default function DashboardPage() {
     orderItemDataAmount
   );
 
+  const carrierDataMb = dataMbFromAssignment(primaryUserEsim);
+  const displayDataMb =
+    confirmedDataMb ??
+    optimisticDataMb ??
+    carrierDataMb ??
+    bundleDataMb;
+
+  const balanceStatusSub = balancePolling
+    ? 'Updating with carrier balance…'
+    : confirmedDataMb != null
+      ? 'Live balance from carrier'
+      : optimisticDataMb != null
+        ? 'Estimated until carrier confirms'
+        : bundleDataMb != null
+          ? apiBundle?.name
+            ? `${apiBundle.name} bundle`
+            : 'Bundle data allowance'
+          : 'No bundle data';
+
   const simType = primaryUserEsim?.esim?.sim_type ?? assignedSim?.esim?.sim_type ?? 'esim';
   const isEsimType = simType.toLowerCase() !== 'physical';
   const simStatus = primaryUserEsim?.esim?.status ?? assignedSim?.esim?.status ?? null;
@@ -925,8 +961,8 @@ export default function DashboardPage() {
       ? userEsims.length
       : (purchase?.items?.reduce((s, c) => s + c.quantity, 0) ?? 0);
 
-  const headlineData = displayDataBalance(bundleDataMb);
-  const balanceAreaValue = displayDataBalance(bundleDataMb);
+  const headlineData = displayDataBalance(displayDataMb);
+  const balanceAreaValue = displayDataBalance(displayDataMb);
 
   const esimTitle =
     assignedBundleName ??
@@ -961,6 +997,14 @@ export default function DashboardPage() {
           </button>
         </div>
       </div>
+
+      {balancePolling ? (
+        <div className="bg-emerald-50 border-b border-emerald-100 px-4 py-3">
+          <p className="max-w-5xl mx-auto text-sm text-emerald-800">
+            Balance updated with your purchase. Waiting for carrier confirmation (usually within a few minutes)…
+          </p>
+        </div>
+      ) : null}
 
       {topUpModalOpen && (
         <div
@@ -1378,12 +1422,7 @@ export default function DashboardPage() {
                   icon: <Globe size={16} style={{ color: '#17cf54' }} />,
                   label: 'Balance',
                   value: balanceAreaValue,
-                  sub:
-                    bundleDataMb != null
-                      ? apiBundle?.name
-                        ? `${apiBundle.name} bundle`
-                        : 'Bundle data allowance'
-                      : 'No bundle data',
+                  sub: balanceStatusSub,
                 },
                 {
                   icon: <Clock size={16} style={{ color: '#17cf54' }} />,

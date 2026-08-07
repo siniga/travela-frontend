@@ -4,6 +4,7 @@ import { useAuth } from '@/lib/auth-context';
 import { ArrowRight, Wifi, Zap, Shield } from 'lucide-react';
 import Image from 'next/image';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
 
 const typingPhrases = [
@@ -96,14 +97,22 @@ const howItWorks = [
 ];
 
 export default function LandingPage() {
+  const router = useRouter();
   const typedText = useTypewriter(typingPhrases);
   const { isAuthenticated, isLoading } = useAuth();
 
-  const ctaHref =
-    !isLoading && isAuthenticated
-      ? '/bundles?country=TZ&countryName=Tanzania&topup=1'
-      : '/bundles?country=TZ&countryName=Tanzania';
-  const ctaLabel = !isLoading && isAuthenticated ? 'Top Up' : 'Get Started';
+  useEffect(() => {
+    if (!isLoading && isAuthenticated) {
+      router.replace('/dashboard');
+    }
+  }, [isAuthenticated, isLoading, router]);
+
+  if (isLoading || isAuthenticated) {
+    return null;
+  }
+
+  const ctaHref = '/bundles?country=TZ&countryName=Tanzania';
+  const ctaLabel = 'Get Started';
 
   return (
     <div>

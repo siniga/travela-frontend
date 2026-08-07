@@ -398,6 +398,13 @@ export const EsimsApi = {
     });
     return toApiResult(res);
   },
+  /** GET /me/esims/balance-status — poll until Vodacom balance callback is stored */
+  balanceStatus: async (params: { since: string; msisdn?: string }): Promise<ApiResult> => {
+    const qs = new URLSearchParams({ since: params.since });
+    if (params.msisdn) qs.set("msisdn", params.msisdn);
+    const res = await authFetch(`${PUBLIC_API_BASE}/me/esims/balance-status?${qs.toString()}`);
+    return toApiResult(res);
+  },
 };
 
 /** Parse GET /me/esims/{id}/activation response — activation value is `qr_code_data` only. */

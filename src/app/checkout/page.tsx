@@ -25,6 +25,7 @@ import {
   normalizePaymentUrl,
   resolvePaymentTargetUrl,
 } from '@/lib/payment';
+import { startBalancePoll } from '@/lib/balance-poll';
 
 interface CartItem {
   bundle: {
@@ -53,6 +54,8 @@ interface Cart {
   /** Required for top-up: user's assigned SIM */
   user_esim_id?: number;
   msisdn?: string;
+  /** Known data balance (MB) at top-up time — used for optimistic total */
+  current_data_mb?: number;
 }
 
 function formatMb(mb?: number) {
@@ -644,6 +647,19 @@ export default function CheckoutPage() {
       });
 
       savePendingPayment({ orderId, draftId });
+
+      if (isTopUpFlow && cart) {
+        const purchasedDataMb = cart.items.reduce(
+          (sum, it) => sum + (Number(it.bundle.data_mb) || 0) * it.quantity,
+          0,
+        );
+        startBalancePoll({
+          msisdn: cart.msisdn,
+          purchasedDataMb,
+          currentDataMb: cart.current_data_mb,
+        });
+      }
+
       openPaymentInNewTab(targetUrl, paymentTab);
       router.push('/dashboard');
     } catch (e: unknown) {

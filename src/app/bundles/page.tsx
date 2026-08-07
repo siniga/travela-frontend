@@ -5,6 +5,8 @@ import Image from 'next/image';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Suspense, useEffect, useState } from 'react';
 import { BundlesApi, EsimsApi } from '@/lib/api';
+import { getOptimisticDataMb } from '@/lib/balance-poll';
+import { dataMbFromAssignment } from '@/lib/esim-balance';
 
 interface Bundle {
   id: string | number;
@@ -127,6 +129,7 @@ function BundlesContent() {
 
     let user_esim_id: number | undefined;
     let msisdn: string | undefined;
+    let current_data_mb: number | undefined;
 
     if (checkoutMode === 'topup') {
       try {
@@ -145,6 +148,9 @@ function BundlesContent() {
               : [];
         const first = rows[0] as {
           id?: number;
+          balances?: Record<string, unknown> | null;
+          bundle?: { data_mb?: number | null };
+          order_item?: { data_amount?: number | null };
           esim?: { msisdn?: string | null; phone_number?: string | null };
         } | undefined;
         user_esim_id = first?.id;
@@ -156,6 +162,8 @@ function BundlesContent() {
           window.alert('No SIM found on your account. Complete your first purchase first.');
           return;
         }
+        current_data_mb =
+          getOptimisticDataMb() ?? dataMbFromAssignment(first) ?? 0;
       } catch {
         window.alert('Could not load your SIM. Try again from the dashboard.');
         return;
@@ -170,7 +178,9 @@ function BundlesContent() {
         countryName,
         simType,
         checkoutMode,
-        ...(checkoutMode === 'topup' ? { user_esim_id, msisdn } : {}),
+        ...(checkoutMode === 'topup'
+          ? { user_esim_id, msisdn, current_data_mb }
+          : {}),
       })
     );
     router.push('/checkout');
