@@ -124,6 +124,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           name: apiUser?.name ?? cached?.name,
           email: apiUser?.email ?? cached?.email,
           email_verified: apiUser?.email_verified ?? cached?.email_verified,
+          role: apiUser?.role ?? cached?.role,
         };
         localStorage.setItem('user', JSON.stringify(merged));
         setUser(merged);
@@ -179,6 +180,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         name: apiUser?.name,
         email: apiUser?.email ?? trimmedEmail,
         email_verified: emailVerified,
+        role: apiUser?.role,
       };
 
       persistSession(authToken, authUser);

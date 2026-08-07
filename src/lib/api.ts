@@ -163,6 +163,7 @@ export type AuthUserPayload = {
   name?: string;
   email?: string;
   email_verified?: boolean;
+  role?: string;
 };
 
 export function extractUserFromAuthBody(body: unknown): AuthUserPayload | null {
@@ -174,12 +175,14 @@ export function extractUserFromAuthBody(body: unknown): AuthUserPayload | null {
     const name = record.name;
     const email = record.email;
     const emailVerified = record.email_verified;
+    const role = record.role;
     if (id == null && name == null && email == null) return null;
     return {
       id: typeof id === "number" || typeof id === "string" ? id : undefined,
       name: typeof name === "string" ? name : undefined,
       email: typeof email === "string" ? email : undefined,
       email_verified: typeof emailVerified === "boolean" ? emailVerified : undefined,
+      role: typeof role === "string" ? role : undefined,
     };
   };
 
@@ -208,8 +211,19 @@ export const CountriesApi = {
 };
 
 export const BundlesApi = {
-  // GET /public/bundles
-  list: async <T = unknown>() => getJson<T>(`${PUBLIC_API_BASE}/public/bundles`),
+  // GET /public/bundles — sends Bearer token when present so admins see admin-only SKUs
+  list: async <T = unknown>(): Promise<{ data: T }> => {
+    const token = getBearerToken();
+    if (token) {
+      const res = await authFetch(`${PUBLIC_API_BASE}/public/bundles`);
+      const body = await parseResponseBody(res);
+      if (!res.ok) {
+        throw new Error(`Request failed (${res.status}) /public/bundles`);
+      }
+      return { data: body as T };
+    }
+    return getJson<T>(`${PUBLIC_API_BASE}/public/bundles`);
+  },
 };
 
 export const KycApi = {
