@@ -1,4 +1,4 @@
-'use client';
+﻿'use client';
 
 import {
   ArrowLeft,
@@ -698,10 +698,7 @@ export default function CheckoutPage() {
       savePendingPayment({ orderId, draftId });
 
       if (isTopUpFlow && cart) {
-        const purchasedDataMb = cart.items.reduce(
-          (sum, it) => sum + (Number(it.bundle.data_mb) || 0) * it.quantity,
-          0,
-        );
+        const purchasedDataMb = Number(cart.bundle.data_mb) || 0;
         startBalancePoll({
           msisdn: cart.msisdn,
           purchasedDataMb,
