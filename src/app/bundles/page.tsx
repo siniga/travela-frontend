@@ -4,7 +4,8 @@ import { ArrowRight, Check, Loader2, Package, Smartphone, Wifi } from 'lucide-re
 import Image from 'next/image';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Suspense, useEffect, useState } from 'react';
-import { BundlesApi } from '@/lib/api';
+import { BundlesApi, EsimsApi } from '@/lib/api';
+import { getOptimisticDataMb } from '@/lib/balance-poll';
 import {
   type Bundle,
   type BundlesResponse,
@@ -12,6 +13,7 @@ import {
   formatMb,
   mapApiBundles,
 } from '@/lib/bundles';
+import { dataMbFromAssignment } from '@/lib/esim-balance';
 
 type CheckoutMode = 'standard' | 'topup';
 
@@ -68,7 +70,7 @@ function BundlesContent() {
       ? bundles.find((b) => String(b.id) === String(bundleIdParam)) ?? null
       : null;
 
-  const handleCheckout = () => {
+  const handleCheckout = async () => {
     if (!selectedBundle) return;
     const isRegisteredCustomer = !!localStorage.getItem('token');
     const checkoutMode: CheckoutMode =
