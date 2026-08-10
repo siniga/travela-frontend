@@ -1,8 +1,9 @@
-﻿'use client';
+'use client';
 
 import {
   ArrowLeft,
   ArrowRight,
+  Calendar,
   Check,
   CheckCircle,
   CreditCard,
@@ -27,22 +28,20 @@ import {
 } from '@/lib/payment';
 import { startBalancePoll } from '@/lib/balance-poll';
 
-interface CartItem {
-  bundle: {
-    id: string | number;
-    sim_bundle_id?: number | null;
-    name: string;
-    data_mb?: number;
-    validity_days?: number;
-    price?: string | number;
-    currency?: string;
-    description?: string;
-  };
-  quantity: number;
+interface CartBundle {
+  id: string | number;
+  sim_bundle_id?: number | null;
+  name: string;
+  data_mb?: number;
+  validity_days?: number;
+  price?: string | number;
+  currency?: string;
+  description?: string;
 }
 
+/** Only one eSIM/SIM can be purchased per order — no multi-item cart. */
 interface Cart {
-  items: CartItem[];
+  bundle: CartBundle;
   country: string;
   countryName: string;
   simType: 'esim' | 'physical';
@@ -71,10 +70,9 @@ const KYC_PLACEHOLDER = {
   reason_for_travel: 'Tourism' as const,
 };
 
-type Step = 'cart' | 'register' | 'otp' | 'payment' | 'success';
+type Step = 'register' | 'otp' | 'payment' | 'success';
 
 const STEPS: { id: Step; label: string }[] = [
-  { id: 'cart', label: 'Cart' },
   { id: 'register', label: 'Create Account' },
   { id: 'otp', label: 'Verify Email' },
   { id: 'payment', label: 'Payment' },
@@ -114,21 +112,29 @@ function tripInclusiveDays(arrivalIso: string, departureIso: string) {
   return Math.round((b.getTime() - a.getTime()) / 86400000) + 1;
 }
 
+function todayIso() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function addDaysToIso(iso: string, days: number): string {
+  const d = new Date(iso + 'T12:00:00');
+  d.setDate(d.getDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+
 /** Auto-filled trip dates when user no longer picks them in checkout. */
 function defaultTripDates() {
-  const arrival = new Date().toISOString().slice(0, 10);
-  const departure = new Date();
-  departure.setDate(departure.getDate() + 30);
+  const arrival = todayIso();
   return {
     tripArrivalDate: arrival,
-    tripDepartureDate: departure.toISOString().slice(0, 10),
+    tripDepartureDate: addDaysToIso(arrival, 30),
   };
 }
 
 export default function CheckoutPage() {
   const router = useRouter();
   const [cart, setCart] = useState<Cart | null>(null);
-  const [step, setStep] = useState<Step>('cart');
+  const [step, setStep] = useState<Step>('register');
   const [isTopUpFlow, setIsTopUpFlow] = useState(false);
 
   // Registration
@@ -140,6 +146,7 @@ export default function CheckoutPage() {
   const [showPasswordConfirm, setShowPasswordConfirm] = useState(false);
   const [registerError, setRegisterError] = useState('');
   const [registerSubmitting, setRegisterSubmitting] = useState(false);
+  const [activationDateError, setActivationDateError] = useState('');
 
   // OTP
   const [otp, setOtp] = useState('');
@@ -166,6 +173,32 @@ export default function CheckoutPage() {
     if (typeof window === 'undefined') return true;
     return sessionStorage.getItem(CHECKOUT_TRANSITION_KEY) !== 'topup-modal';
   });
+
+  const getStoredUserId = (): number | null => {
+    if (typeof window === 'undefined') return null;
+    try {
+      const raw = localStorage.getItem('user');
+      if (!raw) return null;
+      const u = JSON.parse(raw) as { id?: number | string };
+      if (typeof u.id === 'number') return u.id;
+      if (typeof u.id === 'string' && /^\d+$/.test(u.id)) return Number(u.id);
+    } catch {
+      // ignore
+    }
+    return null;
+  };
+
+  const isStoredEmailVerified = (): boolean => {
+    if (typeof window === 'undefined') return false;
+    try {
+      const raw = localStorage.getItem('user');
+      if (!raw) return false;
+      const u = JSON.parse(raw) as { email_verified?: boolean };
+      return u.email_verified === true;
+    } catch {
+      return false;
+    }
+  };
 
   useEffect(() => {
     if (checkoutRevealed) return;
@@ -203,7 +236,14 @@ export default function CheckoutPage() {
         if (topUpCheckout) {
           setStep('payment');
         } else {
-          setStep('cart');
+          const token = localStorage.getItem('token');
+          if (token) {
+            const storedId = getStoredUserId();
+            if (storedId) setRegisteredUserId(storedId);
+            setStep(isStoredEmailVerified() ? 'payment' : 'otp');
+          } else {
+            setStep('register');
+          }
         }
       }
       catch { router.push('/bundles?country=TZ&countryName=Tanzania'); }
@@ -240,10 +280,11 @@ export default function CheckoutPage() {
     );
   }
 
-  const total = cart.items.reduce(
-    (sum, item) => sum + Number(item.bundle.price ?? 0) * item.quantity, 0
-  );
-  const currency = cart.items[0]?.bundle.currency ?? 'USD';
+  const total = Number(cart.bundle.price ?? 0);
+  const currency = cart.bundle.currency ?? 'USD';
+  const validityDays = cart.bundle.validity_days ?? 30;
+  const expiryDate =
+    cart.tripDepartureDate ?? addDaysToIso(cart.tripArrivalDate ?? todayIso(), validityDays);
 
   const formatDisplayDate = (iso: string) =>
     new Date(iso + 'T12:00:00').toLocaleDateString(undefined, {
@@ -252,6 +293,21 @@ export default function CheckoutPage() {
       day: 'numeric',
       year: 'numeric',
     });
+
+  const handleActivationDateChange = (newDateIso: string) => {
+    if (!newDateIso) return;
+    setActivationDateError('');
+    setCart((prev) => {
+      if (!prev) return prev;
+      const updated: Cart = {
+        ...prev,
+        tripArrivalDate: newDateIso,
+        tripDepartureDate: addDaysToIso(newDateIso, 30),
+      };
+      localStorage.setItem('cart', JSON.stringify(updated));
+      return updated;
+    });
+  };
 
   /** Open a blank tab synchronously on user click (call before any await). */
   const beginPaymentTab = (): Window | null => {
@@ -275,6 +331,10 @@ export default function CheckoutPage() {
     const trimmedEmail = email.trim();
     const emailOk = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmedEmail);
 
+    if (cart.simType === 'esim' && !/^\d{4}-\d{2}-\d{2}$/.test(cart.tripArrivalDate ?? '')) {
+      setActivationDateError('Please choose a valid eSIM activation date.');
+      return;
+    }
     if (!trimmedName) {
       setRegisterError('Please enter your full name.');
       return;
@@ -293,6 +353,7 @@ export default function CheckoutPage() {
     }
 
     setRegisterError('');
+    setActivationDateError('');
     setRegisterSubmitting(true);
     try {
       const result = await AuthApi.register({
@@ -481,7 +542,7 @@ export default function CheckoutPage() {
       JSON.stringify({
         order_id: opts.orderId,
         draft_id: opts.draftId ?? orderDraftId,
-        items: cart.items,
+        items: [{ bundle: cart.bundle, quantity: 1 }],
         trip: {
           countryName: cart.countryName,
           arrivalDate: cart.tripArrivalDate,
@@ -498,20 +559,6 @@ export default function CheckoutPage() {
         createdAt: new Date().toISOString(),
       })
     );
-  };
-
-  const getStoredUserId = (): number | null => {
-    if (typeof window === 'undefined') return null;
-    try {
-      const raw = localStorage.getItem('user');
-      if (!raw) return null;
-      const u = JSON.parse(raw) as { id?: number | string };
-      if (typeof u.id === 'number') return u.id;
-      if (typeof u.id === 'string' && /^\d+$/.test(u.id)) return Number(u.id);
-    } catch {
-      // ignore
-    }
-    return null;
   };
 
   const extractUserIdFromRegisterBody = (body: unknown): number | null => {
@@ -564,16 +611,18 @@ export default function CheckoutPage() {
         departure_date: departure,
         duration_days: duration,
       },
-      items: cart.items.map((it) => ({
-        type: 'bundle',
-        bundle_id: Number(it.bundle.id),
-        sim_bundle_id: it.bundle.sim_bundle_id ?? null,
-        bundle_name: it.bundle.name,
-        data_amount: it.bundle.data_mb ?? null,
-        validity_days: it.bundle.validity_days ?? 30,
-        price: Number(it.bundle.price ?? 0),
-        currency: (it.bundle.currency ?? currency) as string,
-      })),
+      items: [
+        {
+          type: 'bundle',
+          bundle_id: Number(cart.bundle.id),
+          sim_bundle_id: cart.bundle.sim_bundle_id ?? null,
+          bundle_name: cart.bundle.name,
+          data_amount: cart.bundle.data_mb ?? null,
+          validity_days: cart.bundle.validity_days ?? 30,
+          price: Number(cart.bundle.price ?? 0),
+          currency: (cart.bundle.currency ?? currency) as string,
+        },
+      ],
       pricing: {
         subtotal: total,
         discount_amount: 0,
@@ -670,34 +719,6 @@ export default function CheckoutPage() {
     } finally {
       setPaying(false);
     }
-  };
-
-  const isStoredEmailVerified = (): boolean => {
-    if (typeof window === 'undefined') return false;
-    try {
-      const raw = localStorage.getItem('user');
-      if (!raw) return false;
-      const u = JSON.parse(raw) as { email_verified?: boolean };
-      return u.email_verified === true;
-    } catch {
-      return false;
-    }
-  };
-
-  const handleCartContinue = () => {
-    const token =
-      typeof window !== 'undefined' ? localStorage.getItem('token') : null;
-    if (token) {
-      const storedId = getStoredUserId();
-      if (storedId) setRegisteredUserId(storedId);
-      if (isStoredEmailVerified()) {
-        setStep('payment');
-      } else {
-        setStep('otp');
-      }
-      return;
-    }
-    setStep('register');
   };
 
   const visibleSteps = isTopUpFlow ? TOPUP_STEPS : STEPS;
@@ -806,8 +827,7 @@ export default function CheckoutPage() {
         <div className="max-w-3xl mx-auto px-4 py-4 flex items-center gap-4">
           <button
             onClick={() => {
-              if (step === 'cart') router.push('/bundles?country=TZ&countryName=Tanzania');
-              else if (step === 'register') setStep('cart');
+              if (step === 'register') router.push('/bundles?country=TZ&countryName=Tanzania');
               else if (step === 'otp') setStep('register');
               else if (step === 'payment') {
                 if (isTopUpFlow) router.push('/bundles?country=TZ&countryName=Tanzania&topup=1');
@@ -862,86 +882,82 @@ export default function CheckoutPage() {
 
       <div className="max-w-3xl mx-auto px-4 py-8">
 
-
-        {/* ── STEP 1: CART ─────────────────────────────────────────────── */}
-        {step === 'cart' && (
-          <div>
-            <h2 className="text-xl font-extrabold text-slate-900 mb-6">Your Cart</h2>
-
-            <div className="bg-white rounded-2xl border border-slate-200 divide-y divide-slate-100 mb-4">
-              {cart.items.map((item, i) => (
-                <div key={i} className="flex items-center gap-4 p-5">
-                  <div
-                    className="w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0"
-                    style={{ backgroundColor: 'rgba(17,33,22,0.07)' }}
-                  >
-                    {cart.simType === 'esim'
-                      ? <Wifi size={18} style={{ color: '#112116' }} />
-                      : <Smartphone size={18} style={{ color: '#112116' }} />}
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-black text-slate-900">{item.bundle.name}</p>
-                    <p className="text-sm font-bold text-slate-800">{formatMb(item.bundle.data_mb)}</p>
-                    <p className="text-xs text-slate-500">
-                      {item.bundle.validity_days ?? 30} days · {currency}{' '}
-                      {Number(item.bundle.price ?? 0).toFixed(0)}
-                      {item.quantity > 1 && ` · Qty: ${item.quantity}`}
-                    </p>
-                  </div>
-                  <p className="text-sm font-extrabold text-slate-900 flex-shrink-0">
-                    {currency} {(Number(item.bundle.price ?? 0) * item.quantity).toFixed(2)}
-                  </p>
-                </div>
-              ))}
-            </div>
-
-            {/* SIM type */}
-            <div
-              className="rounded-xl px-4 py-3 mb-4 flex items-center gap-2 border"
-              style={{ backgroundColor: 'rgba(17,33,22,0.03)', borderColor: 'rgba(17,33,22,0.1)' }}
-            >
-              {cart.simType === 'esim'
-                ? <Wifi size={15} style={{ color: '#112116' }} />
-                : <Smartphone size={15} style={{ color: '#112116' }} />}
-              <span className="text-sm font-semibold text-slate-700">
-                {cart.simType === 'esim' ? 'eSIM — QR code delivered by email' : 'Physical SIM Card'}
-              </span>
-              <button
-                onClick={() => router.push('/bundles?country=TZ&countryName=Tanzania')}
-                className="ml-auto text-xs text-slate-400 hover:text-slate-600"
-              >
-                Change
-              </button>
-            </div>
-
-            {/* Price breakdown */}
-            <div className="bg-white rounded-2xl border border-slate-200 p-5 mb-6">
-              <div className="flex justify-between">
-                <span className="font-extrabold text-slate-900">Total</span>
-                <span className="text-xl font-extrabold" style={{ color: '#112116' }}>
-                  {currency} {total.toFixed(2)}
-                </span>
-              </div>
-            </div>
-
-            <button
-              type="button"
-              onClick={handleCartContinue}
-              className="w-full flex items-center justify-center gap-2 py-4 rounded-xl text-base font-bold text-white hover:opacity-90 transition-opacity"
-              style={{ backgroundColor: '#112116' }}
-            >
-              Continue <ArrowRight size={18} />
-            </button>
-          </div>
-        )}
-
-        {/* ── STEP 2: REGISTER ─────────────────────────────────────────── */}
+        {/* ── STEP 1: REGISTER ─────────────────────────────────────────── */}
         {step === 'register' && (
           <div>
             <h2 className="text-xl font-extrabold text-slate-900 mb-1">Create your account</h2>
             <p className="text-sm text-slate-500 mb-6">
               Register to complete checkout. You&apos;ll confirm with a code on the next step.
             </p>
+
+            {/* Order summary */}
+            <div className="bg-white rounded-2xl border border-slate-200 divide-y divide-slate-100 mb-6">
+              <div className="flex items-center gap-4 p-5">
+                <div
+                  className="w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0"
+                  style={{ backgroundColor: 'rgba(17,33,22,0.07)' }}
+                >
+                  {cart.simType === 'esim'
+                    ? <Wifi size={18} style={{ color: '#112116' }} />
+                    : <Smartphone size={18} style={{ color: '#112116' }} />}
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-black text-slate-900">{cart.bundle.name}</p>
+                  <p className="text-sm font-bold text-slate-800">{formatMb(cart.bundle.data_mb)}</p>
+                  <p className="text-xs text-slate-500">
+                    {cart.bundle.validity_days ?? 30} days ·{' '}
+                    {cart.simType === 'esim' ? 'eSIM' : 'Physical SIM'}
+                  </p>
+                </div>
+                <p className="text-sm font-extrabold text-slate-900 flex-shrink-0">
+                  {currency} {total.toFixed(2)}
+                </p>
+              </div>
+              <div className="flex items-center justify-between px-5 py-4">
+                <span className="font-extrabold text-slate-900">Total</span>
+                <span className="text-lg font-extrabold" style={{ color: '#112116' }}>
+                  {currency} {total.toFixed(2)}
+                </span>
+              </div>
+            </div>
+
+            {/* eSIM activation date */}
+            {cart.simType === 'esim' && (
+              <div className="bg-white rounded-2xl border border-slate-200 p-5 mb-6">
+                <label className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5 block">
+                  eSIM Activation Date
+                </label>
+                <div className="relative">
+                  <Calendar size={15} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
+                  <input
+                    type="date"
+                    min={todayIso()}
+                    value={cart.tripArrivalDate ?? todayIso()}
+                    onChange={(e) => handleActivationDateChange(e.target.value)}
+                    className="w-full pl-10 pr-4 py-3 rounded-xl border border-slate-200 text-sm text-slate-800 focus:outline-none focus:border-slate-400"
+                  />
+                </div>
+                {activationDateError && (
+                  <p className="text-xs font-medium text-red-600 mt-2">{activationDateError}</p>
+                )}
+                <p className="text-xs text-slate-500 mt-2 leading-relaxed">
+                  Defaults to today. If your trip starts on a different date, change it above before continuing.
+                </p>
+                <p className="text-xs font-semibold mt-2 leading-relaxed" style={{ color: '#112116' }}>
+                  Your plan is valid for {validityDays} days from activation ,it will expire on{' '}
+                  {formatDisplayDate(expiryDate)}.
+                </p>
+                {cart.tripArrivalDate && cart.tripArrivalDate > todayIso() && (
+                  <p
+                    className="text-xs font-semibold mt-2 rounded-lg px-3 py-2"
+                    style={{ backgroundColor: 'rgba(217,119,6,0.1)', color: '#b45309' }}
+                  >
+                    Your eSIM will activate on {formatDisplayDate(cart.tripArrivalDate)}, not immediately after
+                    payment.
+                  </p>
+                )}
+              </div>
+            )}
 
             <div className="bg-white rounded-2xl border border-slate-200 p-5 space-y-4 mb-6">
               <div>
@@ -1044,7 +1060,7 @@ export default function CheckoutPage() {
           </div>
         )}
 
-        {/* ── STEP 3: OTP ──────────────────────────────────────────────── */}
+        {/* ── STEP 2: OTP ──────────────────────────────────────────────── */}
         {step === 'otp' && (
           <div className="max-w-md mx-auto text-center">
             <div
@@ -1107,7 +1123,7 @@ export default function CheckoutPage() {
           </div>
         )}
 
-        {/* ── STEP 4: PAYMENT ──────────────────────────────────────────── */}
+        {/* ── STEP 3: PAYMENT ──────────────────────────────────────────── */}
         {step === 'payment' && (
           <div>
             <h2 className="text-xl font-extrabold text-slate-900 mb-1">Payment</h2>
@@ -1124,9 +1140,7 @@ export default function CheckoutPage() {
             >
               <div>
                 <p className="text-sm font-bold text-slate-900">
-                  {cart.items
-                    .map((i) => `${formatMb(i.bundle.data_mb)} (${i.bundle.name})${i.quantity > 1 ? ` ×${i.quantity}` : ''}`)
-                    .join(', ')}
+                  {formatMb(cart.bundle.data_mb)} ({cart.bundle.name})
                 </p>
                 <p className="text-xs text-slate-500">
                   {cart.simType === 'esim' ? 'eSIM' : 'Physical SIM'} · {cart.countryName}

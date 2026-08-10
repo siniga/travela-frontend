@@ -2,7 +2,8 @@
 
 import { useAuth } from '@/lib/auth-context';
 import { OrderApi } from '@/lib/api';
-import { ArrowRight, Loader2, Receipt, RefreshCw } from 'lucide-react';
+import { ArrowRight, Loader2, Printer, Receipt, RefreshCw, X } from 'lucide-react';
+import Image from 'next/image';
 import Link from 'next/link';
 import { useCallback, useEffect, useState } from 'react';
 
@@ -36,6 +37,12 @@ interface OrderRecord {
   paid_at: string | null;
   created_at: string;
   updated_at?: string | null;
+  /** Payment gateway's own transaction/payment id — used as the receipt's "Payment ID" */
+  gateway_payment_id?: string | null;
+  payment_gateway?: string | null;
+  payment_callback?: {
+    payload?: { payment_id?: string | null } | null;
+  } | null;
   metadata?: {
     countryName?: string;
     simType?: string;
@@ -48,6 +55,34 @@ interface OrderRecord {
     duration_days?: number;
   } | null;
   order_items?: OrderItem[];
+}
+
+/** Onnela Limited operates thetravela.com — shown on every receipt. */
+const MERCHANT = {
+  legalName: 'Onnela Limited',
+  brand: 'TheTravela',
+  tin: '190-430-618',
+  address: 'Dar Es Salaam, Tanzania',
+};
+
+const VAT_RATE = 0.18;
+
+/** Totals are VAT-inclusive — back out the VAT portion at 18%. */
+function vatFromInclusiveTotal(total: number, rate: number = VAT_RATE) {
+  return (total * rate) / (1 + rate);
+}
+
+function paymentIdFor(order: OrderRecord): string {
+  return (
+    order.gateway_payment_id ||
+    order.payment_callback?.payload?.payment_id ||
+    order.payment_reference ||
+    '—'
+  );
+}
+
+function orderRefFor(order: OrderRecord): string {
+  return order.payment_reference || order.draft_id || `ORD-${order.id}`;
 }
 
 function formatMb(mb?: number | null) {
@@ -102,6 +137,18 @@ function formatDateTime(iso?: string | null) {
   return `${datePart} at ${time}`;
 }
 
+function formatFullDateTime(iso?: string | null) {
+  if (!iso) return '—';
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return '—';
+  const datePart = date.toLocaleDateString(undefined, {
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+  });
+  return `${datePart} at ${formatTime(iso)}`;
+}
+
 function bundleUpdatedAt(item: OrderItem, order: OrderRecord): string | null {
   return item.updated_at ?? order.updated_at ?? order.paid_at ?? order.created_at ?? null;
 }
@@ -128,11 +175,154 @@ function parseOrdersFromBody(body: unknown): OrderRecord[] {
   return b.data as OrderRecord[];
 }
 
+function ReceiptModal({ order, onClose }: { order: OrderRecord; onClose: () => void }) {
+  const items = order.order_items ?? [];
+  const total = Number(order.total_amount || 0);
+  const vat = vatFromInclusiveTotal(total);
+  const currency = order.currency || 'USD';
+  const isPaid = (order.payment_status || order.status || '').toLowerCase() === 'paid';
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/40 px-0 sm:px-4 print:bg-white print:static"
+      onClick={onClose}
+    >
+      <div
+        className="receipt-print bg-white rounded-t-3xl sm:rounded-2xl border border-slate-100 w-full sm:max-w-sm max-h-[90vh] overflow-y-auto p-6 print:max-h-none print:overflow-visible print:border-0 print:rounded-none print:shadow-none"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-start justify-between mb-1 print:hidden">
+          <div />
+          <button
+            type="button"
+            onClick={onClose}
+            className="p-1.5 -mr-1.5 -mt-1.5 rounded-full text-slate-400 hover:bg-slate-100"
+            aria-label="Close receipt"
+          >
+            <X size={18} />
+          </button>
+        </div>
+
+        <div className="text-center mb-5">
+          <Image
+            src="/logos/travela_dark.png"
+            alt={MERCHANT.brand}
+            width={130}
+            height={40}
+            className="h-8 w-auto object-contain mx-auto mb-3"
+          />
+          <h2 className="text-xl font-extrabold text-slate-900">Receipt</h2>
+          <span
+            className="inline-block mt-2 text-xs font-bold px-2.5 py-1 rounded-full"
+            style={statusStyles(order.payment_status || order.status)}
+          >
+            {isPaid ? 'Paid' : statusLabel(order.payment_status || order.status)}
+          </span>
+          <p className="text-xs text-slate-400 mt-2">
+            {formatFullDateTime(order.paid_at ?? order.created_at)}
+          </p>
+        </div>
+
+        <div className="border-t border-dashed border-slate-200 pt-4 mb-4 text-center">
+          <Image
+            src="/logos/onnela_logo.png"
+            alt="Onnela"
+            width={72}
+            height={24}
+            className="h-4 w-auto object-contain opacity-70 mx-auto mb-2"
+          />
+          <p className="text-xs text-slate-500">{MERCHANT.legalName}</p>
+          <p className="text-xs text-slate-500">TIN: {MERCHANT.tin}</p>
+          <p className="text-xs text-slate-500">{MERCHANT.address}</p>
+        </div>
+
+        <div className="border-t border-dashed border-slate-200 pt-4 mb-4">
+          {items.length === 0 ? (
+            <p className="text-sm text-slate-500 text-center">No line items on this order.</p>
+          ) : (
+            items.map((item) => (
+              <div key={item.id} className="flex items-center justify-between gap-3 py-1">
+                <p className="text-sm text-slate-700">
+                  Data {formatItemData(item)}
+                  {item.validity_days ? `, ${item.validity_days} days` : ''}
+                </p>
+                <p className="text-sm font-semibold text-slate-800 flex-shrink-0">
+                  {item.currency ?? currency} {Number(item.price).toFixed(2)}
+                </p>
+              </div>
+            ))
+          )}
+        </div>
+
+        <div className="border-t border-dashed border-slate-200 pt-4 mb-4 space-y-1.5">
+          <div className="flex items-center justify-between">
+            <p className="text-sm font-bold text-slate-800">Total</p>
+            <p className="text-sm font-extrabold" style={{ color: '#112116' }}>
+              {currency} {total.toFixed(2)}
+            </p>
+          </div>
+          <div className="flex items-center justify-between">
+            <p className="text-xs text-slate-500">Incl. VAT</p>
+            <p className="text-xs text-slate-500">
+              {currency} {vat.toFixed(2)}
+            </p>
+          </div>
+          <div className="flex items-center justify-between">
+            <p className="text-xs text-slate-500">VAT rate</p>
+            <p className="text-xs text-slate-500">{(VAT_RATE * 100).toFixed(0)}%</p>
+          </div>
+        </div>
+
+        <div className="border-t border-dashed border-slate-200 pt-4 space-y-1.5">
+          <div className="flex items-center justify-between gap-3">
+            <p className="text-xs text-slate-400">Order ref</p>
+            <p className="text-xs font-semibold text-slate-700 truncate">{orderRefFor(order)}</p>
+          </div>
+          <div className="flex items-center justify-between gap-3">
+            <p className="text-xs text-slate-400">Payment ID</p>
+            <p className="text-xs font-semibold text-slate-700 truncate">{paymentIdFor(order)}</p>
+          </div>
+        </div>
+
+        <button
+          type="button"
+          onClick={() => window.print()}
+          className="print:hidden mt-6 w-full inline-flex items-center justify-center gap-2 py-3 rounded-xl text-sm font-bold text-white hover:opacity-90"
+          style={{ backgroundColor: '#112116' }}
+        >
+          <Printer size={16} />
+          Print / Save as PDF
+        </button>
+      </div>
+
+      <style jsx global>{`
+        @media print {
+          body * {
+            visibility: hidden;
+          }
+          .receipt-print,
+          .receipt-print * {
+            visibility: visible;
+          }
+          .receipt-print {
+            position: fixed;
+            inset: 0;
+            width: 100%;
+            max-width: 420px;
+            margin: 24px auto;
+          }
+        }
+      `}</style>
+    </div>
+  );
+}
+
 export default function ReceiptsPage() {
   const { isAuthenticated, isLoading: authLoading } = useAuth();
   const [orders, setOrders] = useState<OrderRecord[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [selectedOrder, setSelectedOrder] = useState<OrderRecord | null>(null);
 
   const loadOrders = useCallback(async () => {
     setLoading(true);
@@ -334,12 +524,33 @@ export default function ReceiptsPage() {
                       {order.currency} {Number(order.total_amount).toFixed(2)}
                     </p>
                   </div>
+
+                  {(displayStatus.toLowerCase() === 'paid' ||
+                    displayStatus.toLowerCase() === 'completed') && (
+                    <button
+                      type="button"
+                      onClick={() => setSelectedOrder(order)}
+                      className="mt-3 w-full inline-flex items-center justify-center gap-2 py-2.5 rounded-xl text-xs font-bold border-2 transition-colors hover:bg-slate-50"
+                      style={{
+                        backgroundColor: 'rgba(23,207,84,0.08)',
+                        borderColor: 'rgba(23,207,84,0.3)',
+                        color: '#112116',
+                      }}
+                    >
+                      <Receipt size={14} />
+                      View Receipt
+                    </button>
+                  )}
                 </div>
               );
             })}
           </div>
         )}
       </div>
+
+      {selectedOrder && (
+        <ReceiptModal order={selectedOrder} onClose={() => setSelectedOrder(null)} />
+      )}
     </div>
   );
 }

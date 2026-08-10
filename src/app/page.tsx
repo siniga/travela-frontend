@@ -1,11 +1,19 @@
 'use client';
 
 import { useAuth } from '@/lib/auth-context';
-import { ArrowRight, Wifi, Zap, Shield } from 'lucide-react';
+import { ArrowRight, Loader2, Wifi, Zap, Shield } from 'lucide-react';
 import Image from 'next/image';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
+import { BundlesApi } from '@/lib/api';
+import {
+  type Bundle,
+  type BundlesResponse,
+  bundleImageFor,
+  formatMb,
+  mapApiBundles,
+} from '@/lib/bundles';
 
 const typingPhrases = [
   'Zanzibar and Africa.',
@@ -51,30 +59,6 @@ function useTypewriter(phrases: string[], typingSpeed = 80, erasingSpeed = 45, p
   return displayed;
 }
 
-const popularPlans = [
-  {
-    tier: 'Basic',
-    dataLabel: '10 GB',
-    priceLabel: '$20 USD',
-    tagline: 'Maps, chat & light streaming',
-    bg: '/backgrounds/3.jpg',
-  },
-  {
-    tier: 'Standard',
-    dataLabel: '30 GB',
-    priceLabel: '$35 USD',
-    tagline: 'Share stories & video calls',
-    bg: '/backgrounds/1.jpg',
-  },
-  {
-    tier: 'Premium',
-    dataLabel: '50 GB',
-    priceLabel: '$50 USD',
-    tagline: 'Work remotely & heavy usage',
-    bg: '/backgrounds/5.jpg',
-  },
-];
-
 const howItWorks = [
   {
     icon: <Wifi size={28} />,
@@ -100,6 +84,33 @@ export default function LandingPage() {
   const router = useRouter();
   const typedText = useTypewriter(typingPhrases);
   const { isAuthenticated, isLoading } = useAuth();
+  const [popularPlans, setPopularPlans] = useState<Bundle[]>([]);
+  const [plansLoading, setPlansLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    (async () => {
+      setPlansLoading(true);
+      try {
+        const res = await BundlesApi.list<BundlesResponse>();
+        const apiBundles = res.data?.bundles ?? [];
+        const uiBundles = mapApiBundles(apiBundles)
+          .slice()
+          .sort((a, b) => Number(a.price ?? 0) - Number(b.price ?? 0))
+          .slice(0, 3);
+        if (!cancelled) setPopularPlans(uiBundles);
+      } catch {
+        if (!cancelled) setPopularPlans([]);
+      } finally {
+        if (!cancelled) setPlansLoading(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     if (!isLoading && isAuthenticated) {
@@ -177,39 +188,54 @@ export default function LandingPage() {
             Popular eSIM Plans for Zanzibar &amp; Tanzania
           </h2>
 
-          <div className="grid sm:grid-cols-3 gap-6">
-            {popularPlans.map((plan) => (
-              <div
-                key={plan.tier}
-                className="rounded-2xl overflow-hidden border border-slate-100 shadow-sm hover:shadow-md transition-shadow"
-              >
-                {/* Photo */}
-                <div className="relative h-44">
-                  <Image
-                    src={plan.bg}
-                    alt=""
-                    fill
-                    className="object-cover"
-                  />
-                </div>
+          {plansLoading ? (
+            <div className="flex items-center justify-center py-16">
+              <Loader2 size={28} className="animate-spin text-slate-400" />
+            </div>
+          ) : popularPlans.length === 0 ? (
+            <p className="text-center text-slate-500">No plans available right now. Please check back soon.</p>
+          ) : (
+            <div className="grid sm:grid-cols-3 gap-6">
+              {popularPlans.map((plan) => (
+                <div
+                  key={plan.id}
+                  className="rounded-2xl overflow-hidden border border-slate-100 shadow-sm hover:shadow-md transition-shadow"
+                >
+                  {/* Photo */}
+                  <div className="relative h-44">
+                    <Image
+                      src={bundleImageFor(plan.id)}
+                      alt=""
+                      fill
+                      className="object-cover"
+                    />
+                  </div>
 
-                {/* Info */}
-                <div className="p-5">
-                  <p className="text-lg font-black text-slate-900 mb-0.5">{plan.tier}</p>
-                  <h3 className="text-2xl font-black text-slate-900 mb-1 tracking-tight">{plan.dataLabel}</h3>
-                  <p className="text-xs font-semibold text-slate-600 mb-1">{plan.tagline}</p>
-                  <p className="text-sm text-slate-500 mb-3">30 days · {plan.priceLabel}</p>
-                  <Link
-                    href="/bundles?country=TZ&countryName=Tanzania"
-                    className="block w-full text-center py-3 rounded-xl text-sm font-bold text-white transition-opacity hover:opacity-90"
-                    style={{ backgroundColor: '#112116' }}
-                  >
-                    Buy Now
-                  </Link>
+                  {/* Info */}
+                  <div className="p-5">
+                    <p className="text-lg font-black text-slate-900 mb-0.5">{plan.name}</p>
+                    <h3 className="text-2xl font-black text-slate-900 mb-1 tracking-tight">
+                      {formatMb(plan.data_mb)}
+                    </h3>
+                    {plan.tagline && (
+                      <p className="text-xs font-semibold text-slate-600 mb-1">{plan.tagline}</p>
+                    )}
+                    <p className="text-sm text-slate-500 mb-3">
+                      {plan.validity_days ?? 30} days · {plan.currency ?? 'USD'}{' '}
+                      {Number(plan.price ?? 0).toFixed(2)}
+                    </p>
+                    <Link
+                      href={`/bundles?country=TZ&countryName=Tanzania&bundleId=${plan.id}`}
+                      className="block w-full text-center py-3 rounded-xl text-sm font-bold text-white transition-opacity hover:opacity-90"
+                      style={{ backgroundColor: '#112116' }}
+                    >
+                      Buy Now
+                    </Link>
+                  </div>
                 </div>
-              </div>
-            ))}
-          </div>
+              ))}
+            </div>
+          )}
         </div>
       </section>
 

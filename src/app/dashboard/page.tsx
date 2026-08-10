@@ -1,6 +1,7 @@
 'use client';
 
 import ActivateEsimButton from '@/components/esim/ActivateEsimButton';
+import QrCodePanel from '@/components/esim/QrCodePanel';
 import {
   apiErrorMessage,
   BundlesApi,
@@ -10,10 +11,6 @@ import {
   type EsimAssignmentStatus,
 } from '@/lib/api';
 import { useAuth } from '@/lib/auth-context';
-import { buildEsimQrPageHref } from '@/lib/esim-activation';
-import { getOptimisticDataMb } from '@/lib/balance-poll';
-import { dataMbFromAssignment } from '@/lib/esim-balance';
-import { useBalancePoll } from '@/hooks/useBalancePoll';
 import {
   CheckCircle,
   Clock,
@@ -252,7 +249,30 @@ function normalizeBundle(raw: unknown): BundleDetail | null {
 
 function formatMb(mb?: number | null) {
   if (mb == null || mb <= 0) return '—';
-  return `${mb.toLocaleString()} MB`;
+  return mb >= 1024 ? `${(mb / 1024).toFixed(0)} GB` : `${mb.toLocaleString()} MB`;
+}
+
+/** Consistent "Internet - 30 days - 25 MB" style label, regardless of how the raw API `name` is formatted. */
+function bundleTagline(validityDays?: number | null, mb?: number) {
+  const days = validityDays ?? 30;
+  return `Internet - ${days} days - ${formatMb(mb)}`;
+}
+
+/**
+ * Fallback titles by data size, used only while the backend hasn't set an `alias`
+ * for a bundle yet. Keeps naming consistent even before every bundle has an alias.
+ */
+const BUNDLE_NAME_BY_MB: Record<number, string> = {
+  25: 'Starter',
+  10240: 'Nomad',
+  15360: 'Nomad+',
+  30720: 'Heavy user',
+  51200: 'Streamer',
+};
+
+function fallbackBundleName(mb?: number): string | undefined {
+  if (mb == null) return undefined;
+  return BUNDLE_NAME_BY_MB[mb];
 }
 
 function bundleToMb(bundle: ApiBundle): number | undefined {
@@ -531,6 +551,7 @@ export default function DashboardPage() {
   const [assignmentLoading, setAssignmentLoading] = useState(true);
   const [waitingForSim, setWaitingForSim] = useState(false);
   const [esimsError, setEsimsError] = useState('');
+  const [showQrCode, setShowQrCode] = useState(false);
   const [topUpModalOpen, setTopUpModalOpen] = useState(false);
   const [topUpModalShown, setTopUpModalShown] = useState(false);
   const [topUpModalClosing, setTopUpModalClosing] = useState(false);
@@ -621,16 +642,19 @@ export default function DashboardPage() {
       try {
         const res = await BundlesApi.list<BundlesResponse>();
         const apiBundles = res.data?.bundles ?? [];
-        const uiBundles: TopUpBundle[] = apiBundles.map((b) => ({
-          id: b.id,
-          sim_bundle_id: b.sim_bundle_id ?? null,
-          name: b.alias?.trim() || b.name,
-          data_mb: bundleToMb(b),
-          validity_days: b.validity_days ?? undefined,
-          price: b.price ?? undefined,
-          currency: b.currency ?? undefined,
-          tagline: b.name,
-        }));
+        const uiBundles: TopUpBundle[] = apiBundles.map((b) => {
+          const dataMb = bundleToMb(b);
+          return {
+            id: b.id,
+            sim_bundle_id: b.sim_bundle_id ?? null,
+            name: b.alias?.trim() || fallbackBundleName(dataMb) || b.name,
+            data_mb: dataMb,
+            validity_days: b.validity_days ?? undefined,
+            price: b.price ?? undefined,
+            currency: b.currency ?? undefined,
+            tagline: bundleTagline(b.validity_days, dataMb),
+          };
+        });
         if (!cancelled) setTopUpBundles(uiBundles);
       } catch {
         if (!cancelled) setTopUpBundles([]);
@@ -707,7 +731,7 @@ export default function DashboardPage() {
       localStorage.setItem(
         'cart',
         JSON.stringify({
-          items: [{ bundle, quantity: 1 }],
+          bundle,
           country,
           countryName,
           simType,
@@ -897,6 +921,7 @@ export default function DashboardPage() {
     primaryUserEsim?.activation_email_sent_at ?? null;
   const assignedBundleName =
     apiBundle?.alias ??
+    fallbackBundleName(coerceNumber(apiBundle?.data_mb) ?? undefined) ??
     apiBundle?.name ??
     assignedSim?.bundle?.name ??
     primaryBundle?.name ??
@@ -1072,7 +1097,7 @@ export default function DashboardPage() {
                       )}
                       <p className="text-xs text-slate-500 mt-1">
                         {bundle.validity_days ?? 30} days · {bundle.currency ?? 'USD'}{' '}
-                        {Number(bundle.price ?? 0).toFixed(0)}
+                        {Number(bundle.price ?? 0).toFixed(2)}
                       </p>
                     </div>
                     <button
@@ -1258,6 +1283,55 @@ export default function DashboardPage() {
           </div>
         ) : hasActiveEsim ? (
           <>
+            {/* Activation instructions — shown first so users know what the buttons below do */}
+            {isEsimType && !primaryUserEsim?.device_activated_at && (
+              <div className="bg-white rounded-2xl border border-dashed border-slate-300 p-6">
+                <div className="flex items-center gap-2 mb-4">
+                  <Info size={18} style={{ color: '#17cf54' }} />
+                  <h3 className="text-xs font-extrabold uppercase tracking-widest text-slate-600">
+                    How to Install &amp; Activate Your eSIM
+                  </h3>
+                </div>
+                {[
+                  {
+                    num: '1',
+                    text: (
+                      <>
+                        On the phone you want to use for data, tap{' '}
+                        <strong className="text-slate-900">Activate eSIM</strong> below. On a different device
+                        (like a computer), tap <strong className="text-slate-900">Open QR Code</strong> instead
+                        and scan it with the phone you want to install the eSIM on.
+                      </>
+                    ),
+                  },
+                  {
+                    num: '2',
+                    text: 'Follow the prompts on your device to install the eSIM.',
+                  },
+                  {
+                    num: '3',
+                    text: (
+                      <>
+                        After a successful installation, make sure to turn on the eSIM and that{' '}
+                        <strong className="text-slate-900">Data Roaming</strong> is enabled on your new eSIM.
+                      </>
+                    ),
+                  },
+                  { num: '4', text: 'Enjoy your trip!' },
+                ].map((step) => (
+                  <div key={step.num} className="flex gap-3 mb-3 last:mb-0">
+                    <div
+                      className="w-6 h-6 rounded-full flex-shrink-0 flex items-center justify-center text-xs font-bold"
+                      style={{ backgroundColor: 'rgba(23,207,84,0.15)', color: '#112116' }}
+                    >
+                      {step.num}
+                    </div>
+                    <p className="text-sm text-slate-600 leading-relaxed">{step.text}</p>
+                  </div>
+                ))}
+              </div>
+            )}
+
             {/* SIM card */}
             <div
               className="rounded-2xl p-6 text-white"
@@ -1338,36 +1412,53 @@ export default function DashboardPage() {
               )}
 
               {isEsimType && primaryUserEsim?.id && (
-                <ActivateEsimButton
-                  userEsimId={primaryUserEsim.id}
-                  qrCodeData={assignedQrCodeData}
-                  deviceActivatedAt={primaryUserEsim.device_activated_at}
-                  msisdn={assignedMsisdn}
-                  variant="dark"
-                  onActivated={(activatedAt) => {
-                    setUserEsims((prev) =>
-                      prev.map((row) =>
-                        row.id === primaryUserEsim.id
-                          ? { ...row, device_activated_at: activatedAt }
-                          : row
-                      )
-                    );
-                  }}
-                />
+                <div
+                  className={
+                    !primaryUserEsim.device_activated_at && hasActivationData
+                      ? 'mt-5 grid grid-cols-1 sm:grid-cols-2 gap-3'
+                      : 'mt-5'
+                  }
+                >
+                  <ActivateEsimButton
+                    userEsimId={primaryUserEsim.id}
+                    qrCodeData={assignedQrCodeData}
+                    deviceActivatedAt={primaryUserEsim.device_activated_at}
+                    msisdn={assignedMsisdn}
+                    variant="dark"
+                    onActivated={(activatedAt) => {
+                      setUserEsims((prev) =>
+                        prev.map((row) =>
+                          row.id === primaryUserEsim.id
+                            ? { ...row, device_activated_at: activatedAt }
+                            : row
+                        )
+                      );
+                    }}
+                  />
+
+                  {!primaryUserEsim.device_activated_at && hasActivationData && (
+                    <button
+                      type="button"
+                      onClick={() => setShowQrCode((v) => !v)}
+                      className="w-full flex items-center justify-center gap-2 py-3.5 rounded-xl text-sm font-bold border border-white/25 text-white hover:bg-white/10 transition-colors"
+                    >
+                      {showQrCode ? 'Hide QR Code' : 'Open QR Code'}
+                    </button>
+                  )}
+                </div>
               )}
 
               {isEsimType &&
                 primaryUserEsim?.id &&
-                !primaryUserEsim?.device_activated_at &&
-                hasActivationData && (
-                  <a
-                    href={buildEsimQrPageHref(primaryUserEsim.id)}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="mt-3 w-full flex items-center justify-center gap-2 py-3 rounded-xl text-sm font-bold border border-white/25 text-white hover:bg-white/10 transition-colors"
-                  >
-                    Open QR code
-                  </a>
+                !primaryUserEsim.device_activated_at &&
+                hasActivationData &&
+                showQrCode && (
+                  <QrCodePanel
+                    userEsimId={primaryUserEsim.id}
+                    qrCodeData={assignedQrCodeData}
+                    msisdn={assignedMsisdn}
+                    iccid={assignedIccid}
+                  />
                 )}
 
               {isEsimType &&
@@ -1385,7 +1476,7 @@ export default function DashboardPage() {
                       <>
                         We&apos;ll email activation details to{' '}
                         <span className="font-semibold text-white">{user.email}</span>{' '}
-                        shortly. Use <strong className="text-white">Open QR code</strong> or{' '}
+                        shortly. Use <strong className="text-white">Open QR Code</strong> or{' '}
                         <strong className="text-white">Activate eSIM</strong> above when ready.
                       </>
                     )}
@@ -1454,44 +1545,8 @@ export default function DashboardPage() {
               ))}
             </div>
 
-            {/* Activation instructions */}
-            {isEsimType ? (
-              <div className="bg-white rounded-2xl border border-dashed border-slate-300 p-6">
-                <div className="flex items-center gap-2 mb-4">
-                  <Info size={18} style={{ color: '#17cf54' }} />
-                  <h3 className="text-xs font-extrabold uppercase tracking-widest text-slate-600">
-                    How to Activate
-                  </h3>
-                </div>
-                {[
-                  {
-                    num: '1',
-                    text: 'Tap ',
-                    bold: 'Activate eSIM',
-                    after: ' above to open your device setup flow',
-                  },
-                  {
-                    num: '2',
-                    text: 'Follow the prompts to add the eSIM to your phone',
-                  },
-                  { num: '3', text: 'Turn on ', bold: 'Data Roaming', after: ' for the new eSIM' },
-                ].map((step) => (
-                  <div key={step.num} className="flex gap-3 mb-3">
-                    <div
-                      className="w-6 h-6 rounded-full flex-shrink-0 flex items-center justify-center text-xs font-bold"
-                      style={{ backgroundColor: 'rgba(23,207,84,0.15)', color: '#112116' }}
-                    >
-                      {step.num}
-                    </div>
-                    <p className="text-sm text-slate-600 leading-relaxed">
-                      {step.text}
-                      <strong className="text-slate-900">{step.bold}</strong>
-                      {step.after ?? ''}
-                    </p>
-                  </div>
-                ))}
-              </div>
-            ) : (
+            {/* Activation instructions (physical SIM — eSIM instructions are shown above the SIM card) */}
+            {!isEsimType && (
               <div className="bg-white rounded-2xl border border-dashed border-slate-300 p-6">
                 <div className="flex items-center gap-2 mb-4">
                   <Info size={18} style={{ color: '#17cf54' }} />
