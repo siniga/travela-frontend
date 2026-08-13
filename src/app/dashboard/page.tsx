@@ -11,6 +11,9 @@ import {
   type EsimAssignmentStatus,
 } from '@/lib/api';
 import { useAuth } from '@/lib/auth-context';
+import { getOptimisticDataMb } from '@/lib/balance-poll';
+import { dataMbFromAssignment } from '@/lib/esim-balance';
+import { useBalancePoll } from '@/hooks/useBalancePoll';
 import {
   CheckCircle,
   Clock,
