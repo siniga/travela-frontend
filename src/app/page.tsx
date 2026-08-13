@@ -267,23 +267,56 @@ export default function LandingPage() {
         </div>
       </section>
 
-      {/* CTA */}
-      <section className="py-16 text-white" style={{ backgroundColor: '#112116' }}>
-        <div className="max-w-3xl mx-auto px-4 text-center">
-          <h2 className="text-3xl sm:text-4xl font-extrabold mb-4">
-            Ready to travel{' '}
-            <span style={{ color: '#17cf54' }}>connected</span>?
-          </h2>
-          <p className="text-base text-white/60 mb-8">
-            Join thousands of travellers staying connected across Africa with Travela eSIMs and SIM cards.
-          </p>
-          <Link
-            href="/bundles?country=TZ&countryName=Tanzania"
-            className="inline-flex items-center gap-2 px-8 py-4 rounded-xl text-base font-bold transition-opacity hover:opacity-90"
-            style={{ backgroundColor: '#17cf54', color: '#112116' }}
-          >
-            Get your SIM now <ArrowRight size={18} />
-          </Link>
+      {/* CTA — photo card so it doesn’t blend into the dark footer */}
+      <section className="relative py-10 sm:py-14" style={{ backgroundColor: '#f6f8f6' }}>
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="relative overflow-hidden rounded-[2rem] px-6 py-16 sm:px-12 sm:py-20 text-white shadow-lg">
+            <Image
+              src="/backgrounds/6.jpg"
+              alt=""
+              fill
+              className="object-cover object-center"
+              sizes="100vw"
+            />
+            <div
+              className="absolute inset-0"
+              style={{
+                background:
+                  'linear-gradient(120deg, rgba(17,33,22,0.88) 0%, rgba(17,33,22,0.72) 48%, rgba(23,207,84,0.28) 100%)',
+              }}
+            />
+            <div
+              className="pointer-events-none absolute -top-24 -right-16 h-72 w-72 rounded-full blur-3xl opacity-40"
+              style={{ backgroundColor: '#17cf54' }}
+            />
+            <div
+              className="pointer-events-none absolute -bottom-24 -left-10 h-56 w-56 rounded-full blur-3xl opacity-25"
+              style={{ backgroundColor: '#17cf54' }}
+            />
+
+            <div className="relative max-w-2xl mx-auto text-center">
+              <p
+                className="inline-flex items-center rounded-full px-3 py-1 text-xs font-bold tracking-wide uppercase mb-5"
+                style={{ backgroundColor: 'rgba(23,207,84,0.18)', color: '#17cf54' }}
+              >
+                Tanzania · eSIM &amp; SIM
+              </p>
+              <h2 className="text-3xl sm:text-4xl font-extrabold mb-4">
+                Ready to travel{' '}
+                <span style={{ color: '#17cf54' }}>connected</span>?
+              </h2>
+              <p className="text-base text-white/80 mb-8">
+                Join thousands of travellers staying connected across Africa with Travela eSIMs and SIM cards.
+              </p>
+              <Link
+                href="/bundles?country=TZ&countryName=Tanzania"
+                className="inline-flex items-center gap-2 px-8 py-4 rounded-xl text-base font-bold transition-opacity hover:opacity-90"
+                style={{ backgroundColor: '#17cf54', color: '#112116' }}
+              >
+                Get your SIM now <ArrowRight size={18} />
+              </Link>
+            </div>
+          </div>
         </div>
       </section>
     </div>
