@@ -102,8 +102,7 @@ interface PhysicalPickupDetails {
   draftId?: string;
   orderId?: string | number;
   countryName?: string;
-  arrivalDate?: string | null;
-  departureDate?: string | null;
+  deactivationDate?: string | null;
   items: {
     name: string;
     dataLabel: string;
@@ -336,6 +335,25 @@ function formatTripDate(iso?: string | null) {
   });
 }
 
+function toDatePart(iso?: string | null): string | null {
+  if (!iso) return null;
+  const datePart = iso.includes('T') ? iso.split('T')[0] : iso;
+  return /^\d{4}-\d{2}-\d{2}$/.test(datePart) ? datePart : null;
+}
+
+function addDaysToIso(iso: string, days: number): string {
+  const d = new Date(iso + 'T12:00:00');
+  d.setDate(d.getDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+
+/** Plans last `validityDays` from the start date (default 30). */
+function deactivationIsoFrom(startIso?: string | null, validityDays = 30): string | null {
+  const start = toDatePart(startIso);
+  if (!start) return null;
+  return addDaysToIso(start, validityDays);
+}
+
 function parseEsimsFromBody(body: unknown): EsimsListResponse {
   if (!body || typeof body !== 'object') {
     return { esims: [], latestOrderBundle: null };
@@ -459,13 +477,18 @@ function resolvePhysicalPickupDetails(
         currency: item.currency ?? apiOrder.currency,
       })) ?? [];
 
+    const validityDays = items[0]?.validityDays ?? 30;
     return {
       draftId: apiOrder.draft_id,
       orderId: apiOrder.id,
       countryName:
         apiOrder.metadata?.countryName ?? apiOrder.trip?.destination_country ?? undefined,
-      arrivalDate: apiOrder.trip?.arrival_date ?? null,
-      departureDate: apiOrder.trip?.departure_date ?? null,
+      deactivationDate:
+        apiOrder.trip?.departure_date ??
+        deactivationIsoFrom(
+          apiOrder.trip?.arrival_date ?? apiOrder.paid_at ?? apiOrder.created_at,
+          validityDays
+        ),
       items,
       total: apiOrder.total_amount,
       currency: apiOrder.currency,
@@ -492,12 +515,14 @@ function resolvePhysicalPickupDetails(
       currency: item.bundle.currency ?? source.currency,
     })) ?? [];
 
+  const validityDays = items[0]?.validityDays ?? 30;
   return {
     draftId: localSource?.draft_id ?? purchase?.draftId,
     orderId: localSource?.order_id ?? purchase?.orderId,
     countryName: source.trip?.countryName,
-    arrivalDate: source.trip?.arrivalDate ?? null,
-    departureDate: source.trip?.departureDate ?? null,
+    deactivationDate:
+      source.trip?.departureDate ??
+      deactivationIsoFrom(source.trip?.arrivalDate ?? purchase?.date, validityDays),
     items,
     total: source.total != null ? Number(source.total).toFixed(2) : undefined,
     currency: source.currency,
@@ -997,8 +1022,29 @@ export default function DashboardPage() {
     (assignedMsisdn ? formatMsisdn(assignedMsisdn) : null) ??
     'eSIM';
 
+  const latestPaidOrder = orders
+    .filter(isPaidOrder)
+    .sort(
+      (a, b) =>
+        new Date(b.paid_at ?? b.created_at).getTime() -
+        new Date(a.paid_at ?? a.created_at).getTime()
+    )[0];
+  const planValidityDays =
+    coerceNumber(latestPaidOrder?.order_items?.[0]?.validity_days) ??
+    coerceNumber(apiBundle?.validity_days) ??
+    coerceNumber(primaryBundle?.validity_days) ??
+    30;
   const activationIso =
-    purchase?.trip?.arrivalDate ?? primaryUserEsim?.created_at ?? null;
+    purchase?.trip?.arrivalDate ??
+    latestPaidOrder?.trip?.arrival_date ??
+    primaryUserEsim?.created_at ??
+    latestPaidOrder?.paid_at ??
+    latestPaidOrder?.created_at ??
+    null;
+  const deactivationIso =
+    purchase?.trip?.departureDate ??
+    latestPaidOrder?.trip?.departure_date ??
+    deactivationIsoFrom(activationIso, planValidityDays);
 
   return (
     <div className="min-h-screen" style={{ backgroundColor: '#f6f8f6' }}>
@@ -1201,23 +1247,13 @@ export default function DashboardPage() {
                     <p className="text-sm font-bold text-slate-900">{physicalPickupDetails.countryName}</p>
                   </div>
                 )}
-                {formatTripDate(physicalPickupDetails.arrivalDate) && (
+                {formatTripDate(physicalPickupDetails.deactivationDate) && (
                   <div className="rounded-xl bg-slate-50 border border-slate-100 px-4 py-3">
                     <p className="text-xs font-bold uppercase tracking-wide text-slate-400 mb-1">
-                      Arrival date
+                      Deactivation date
                     </p>
                     <p className="text-sm font-bold text-slate-900">
-                      {formatTripDate(physicalPickupDetails.arrivalDate)}
-                    </p>
-                  </div>
-                )}
-                {formatTripDate(physicalPickupDetails.departureDate) && (
-                  <div className="rounded-xl bg-slate-50 border border-slate-100 px-4 py-3">
-                    <p className="text-xs font-bold uppercase tracking-wide text-slate-400 mb-1">
-                      Departure date
-                    </p>
-                    <p className="text-sm font-bold text-slate-900">
-                      {formatTripDate(physicalPickupDetails.departureDate)}
+                      {formatTripDate(physicalPickupDetails.deactivationDate)}
                     </p>
                   </div>
                 )}
@@ -1371,14 +1407,24 @@ export default function DashboardPage() {
                       {assignedBundleDuration}
                     </p>
                   )}
-                  {formatTripDate(activationIso) && (
+                  {isEsimType && formatTripDate(activationIso) && (
                     <p className="text-xs font-semibold text-white/60 uppercase tracking-wide mt-2">
-                      Scheduled activation
+                      eSIM activation date
                     </p>
                   )}
-                  {formatTripDate(activationIso) && (
+                  {isEsimType && formatTripDate(activationIso) && (
                     <p className="text-sm font-bold" style={{ color: '#17cf54' }}>
                       {formatTripDate(activationIso)}
+                    </p>
+                  )}
+                  {formatTripDate(deactivationIso) && (
+                    <p className="text-xs font-semibold text-white/60 uppercase tracking-wide mt-2">
+                      Deactivation date
+                    </p>
+                  )}
+                  {formatTripDate(deactivationIso) && (
+                    <p className="text-sm font-bold" style={{ color: '#17cf54' }}>
+                      {formatTripDate(deactivationIso)}
                     </p>
                   )}
                   {purchase?.trip?.countryName && (
@@ -1521,8 +1567,10 @@ export default function DashboardPage() {
                 {
                   icon: <Clock size={16} style={{ color: '#17cf54' }} />,
                   label: 'Duration',
-                  value: assignedBundleDuration ?? '—',
-                  sub: primaryUserEsim?.created_at ? 'Assigned' : 'Bundle validity',
+                  value: assignedBundleDuration ?? `${planValidityDays} days`,
+                  sub: formatTripDate(deactivationIso)
+                    ? `Deactivates ${formatTripDate(deactivationIso)}`
+                    : '30-day plan',
                 },
                 {
                   icon: <Smartphone size={16} style={{ color: '#17cf54' }} />,
@@ -1558,7 +1606,10 @@ export default function DashboardPage() {
                   </h3>
                 </div>
                 <p className="text-sm text-slate-600 leading-relaxed">
-                  Insert your physical SIM card into your device. Your plan will activate once the SIM is registered on the network.
+                  Insert your physical SIM card into your device. Your plan will activate once the SIM is registered on the network
+                  {formatTripDate(deactivationIso)
+                    ? `, and deactivates on ${formatTripDate(deactivationIso)} (${planValidityDays} days).`
+                    : ` and lasts ${planValidityDays} days.`}
                 </p>
               </div>
             )}

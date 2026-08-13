@@ -156,8 +156,8 @@ function BundlesContent() {
           </h1>
           <p className="text-white/60 text-base">
             {preselectedBundle
-              ? 'For eSIM, we activate on your arrival date — you choose the dates at checkout.'
-              : '30 days of data per plan. For eSIM, we activate on your arrival date — you choose the dates at checkout.'}
+              ? 'For eSIM, you choose your activation date at checkout.'
+              : '30 days of data per plan. For eSIM, you choose your activation date at checkout.'}
           </p>
         </div>
       </div>
@@ -187,7 +187,7 @@ function BundlesContent() {
               </div>
               <div>
                 <p className="text-sm font-extrabold text-slate-900">eSIM</p>
-                <p className="text-xs text-slate-500 mt-0.5">Digital · Activation on your arrival date</p>
+                <p className="text-xs text-slate-500 mt-0.5">Digital · You choose the activation date</p>
               </div>
               {simType === 'esim' && (
                 <span

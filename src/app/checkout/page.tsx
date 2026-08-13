@@ -46,9 +46,9 @@ interface Cart {
   country: string;
   countryName: string;
   simType: 'esim' | 'physical';
-  /** YYYY-MM-DD — destination arrival; used to schedule eSIM activation */
+  /** YYYY-MM-DD — eSIM activation date (API still stores this as trip arrival_date) */
   tripArrivalDate?: string;
-  /** YYYY-MM-DD — end of trip / leaving destination */
+  /** YYYY-MM-DD — plan expiry, derived from activation date + validity */
   tripDepartureDate?: string;
   checkoutMode?: 'standard' | 'topup';
   /** Required for top-up: user's assigned SIM */
@@ -123,12 +123,12 @@ function addDaysToIso(iso: string, days: number): string {
   return d.toISOString().slice(0, 10);
 }
 
-/** Auto-filled trip dates when user no longer picks them in checkout. */
-function defaultTripDates() {
-  const arrival = todayIso();
+/** Default eSIM activation date (today) and expiry (activation + 30 days) for the order API. */
+function defaultActivationDates() {
+  const activation = todayIso();
   return {
-    tripArrivalDate: arrival,
-    tripDepartureDate: addDaysToIso(arrival, 30),
+    tripArrivalDate: activation,
+    tripDepartureDate: addDaysToIso(activation, 30),
   };
 }
 
@@ -231,10 +231,14 @@ export default function CheckoutPage() {
           }
         }
 
-        const { tripArrivalDate, tripDepartureDate } = defaultTripDates();
-        const withTripDates: Cart = { ...parsed, tripArrivalDate, tripDepartureDate };
-        setCart(withTripDates);
-        localStorage.setItem('cart', JSON.stringify(withTripDates));
+        const defaults = defaultActivationDates();
+        const withActivationDates: Cart = {
+          ...parsed,
+          tripArrivalDate: parsed.tripArrivalDate ?? defaults.tripArrivalDate,
+          tripDepartureDate: parsed.tripDepartureDate ?? defaults.tripDepartureDate,
+        };
+        setCart(withActivationDates);
+        localStorage.setItem('cart', JSON.stringify(withActivationDates));
 
         if (topUpCheckout) {
           setStep('payment');
@@ -595,7 +599,7 @@ export default function CheckoutPage() {
 
   const buildOrderPayload = (userId: number) => {
     const { tripArrivalDate: fallbackArrival, tripDepartureDate: fallbackDeparture } =
-      defaultTripDates();
+      defaultActivationDates();
     const arrival = cart.tripArrivalDate ?? fallbackArrival;
     const departure = cart.tripDepartureDate ?? fallbackDeparture;
     const duration = tripInclusiveDays(arrival, departure);
@@ -760,9 +764,9 @@ export default function CheckoutPage() {
               <>
                 Your eSIM is scheduled to activate on{' '}
                 <strong className="text-slate-700">
-                  {cart.tripArrivalDate ? formatDisplayDate(cart.tripArrivalDate) : 'your arrival date'}
+                  {cart.tripArrivalDate ? formatDisplayDate(cart.tripArrivalDate) : 'your activation date'}
                 </strong>
-                . We&apos;ll email your QR code and setup steps — scan it when you land to get online. Your plan includes 30 days of data from activation.
+                . We&apos;ll email your QR code and setup steps — install it on your activation date to get online. Your plan includes 30 days of data from activation.
               </>
             ) : (
               'Your physical SIM card order is confirmed. We will be in touch for collection or delivery.'
@@ -946,10 +950,10 @@ export default function CheckoutPage() {
                   <p className="text-xs font-medium text-red-600 mt-2">{activationDateError}</p>
                 )}
                 <p className="text-xs text-slate-500 mt-2 leading-relaxed">
-                  Defaults to today. If your trip starts on a different date, change it above before continuing.
+                  Defaults to today. Change it if you want your eSIM to activate on a later date.
                 </p>
                 <p className="text-xs font-semibold mt-2 leading-relaxed" style={{ color: '#112116' }}>
-                  Your plan is valid for {validityDays} days from activation ,it will expire on{' '}
+                  Your plan is valid for {validityDays} days from activation. It will expire on{' '}
                   {formatDisplayDate(expiryDate)}.
                 </p>
                 {cart.tripArrivalDate && cart.tripArrivalDate > todayIso() && (
@@ -1160,7 +1164,7 @@ export default function CheckoutPage() {
                 </p>
                 <p className="text-xs text-slate-500">
                   {cart.simType === 'esim' ? 'eSIM' : 'Physical SIM'} · {cart.countryName}
-                  {cart.tripArrivalDate && (
+                  {cart.simType === 'esim' && cart.tripArrivalDate && (
                     <>
                       {' · '}
                       Activate {formatDisplayDate(cart.tripArrivalDate)}

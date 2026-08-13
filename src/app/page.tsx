@@ -70,7 +70,7 @@ const howItWorks = [
     icon: <Zap size={28} />,
     num: '2',
     title: 'Quick Activation',
-    desc: 'Tell us your arrival date — we schedule your eSIM so it is ready when you land.',
+    desc: 'Choose your eSIM activation date — we schedule it so you are connected when you need it.',
   },
   {
     icon: <Shield size={28} />,
@@ -159,7 +159,7 @@ export default function LandingPage() {
             </h1>
 
             <p className="text-lg text-white/80 mb-10 max-w-lg">
-              No roaming shock — 30-day plans with activation scheduled for your arrival date.
+              No roaming shock — 30-day plans with activation on the date you choose.
             </p>
 
             <div className="flex flex-col sm:flex-row gap-3">
