@@ -354,6 +354,23 @@ function deactivationIsoFrom(startIso?: string | null, validityDays = 30): strin
   return addDaysToIso(start, validityDays);
 }
 
+function daysUntil(iso?: string | null): number | null {
+  const datePart = toDatePart(iso);
+  if (!datePart) return null;
+  const end = new Date(datePart + 'T12:00:00');
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 12);
+  return Math.round((end.getTime() - today.getTime()) / 86400000);
+}
+
+function daysLeftLabel(days: number | null): string | null {
+  if (days == null) return null;
+  if (days < 0) return 'Expired';
+  if (days === 0) return 'Last day';
+  if (days === 1) return '1 day left';
+  return `${days} days left`;
+}
+
 function parseEsimsFromBody(body: unknown): EsimsListResponse {
   if (!body || typeof body !== 'object') {
     return { esims: [], latestOrderBundle: null };
@@ -960,6 +977,7 @@ export default function DashboardPage() {
     (apiBundle?.validity_days ? `${apiBundle.validity_days} days` : null) ??
     assignedSim?.bundle?.duration ??
     (primaryBundle?.validity_days ? `${primaryBundle.validity_days} days` : null);
+  const planValidityLabel = assignedBundleDuration ?? '30 days';
   const bundleDataMb = resolveBundleDataMb(
     primaryUserEsim?.bundle,
     latestOrderBundle,
@@ -1034,17 +1052,30 @@ export default function DashboardPage() {
     coerceNumber(apiBundle?.validity_days) ??
     coerceNumber(primaryBundle?.validity_days) ??
     30;
-  const activationIso =
-    purchase?.trip?.arrivalDate ??
-    latestPaidOrder?.trip?.arrival_date ??
-    primaryUserEsim?.created_at ??
-    latestPaidOrder?.paid_at ??
-    latestPaidOrder?.created_at ??
-    null;
-  const deactivationIso =
-    purchase?.trip?.departureDate ??
-    latestPaidOrder?.trip?.departure_date ??
-    deactivationIsoFrom(activationIso, planValidityDays);
+  const scheduledActivationIso =
+    purchase?.trip?.arrivalDate ?? latestPaidOrder?.trip?.arrival_date ?? null;
+  const planStartIso = simIsActive
+    ? (primaryUserEsim?.device_activated_at ??
+      scheduledActivationIso ??
+      primaryUserEsim?.created_at ??
+      latestPaidOrder?.paid_at ??
+      latestPaidOrder?.created_at ??
+      null)
+    : scheduledActivationIso;
+  const deactivationIso = simIsActive
+    ? deactivationIsoFrom(planStartIso, planValidityDays)
+    : (purchase?.trip?.departureDate ??
+      latestPaidOrder?.trip?.departure_date ??
+      deactivationIsoFrom(scheduledActivationIso, planValidityDays));
+  const daysRemaining = simIsActive ? daysUntil(deactivationIso) : null;
+  const daysRemainingLabel = daysLeftLabel(daysRemaining);
+  const validityProgressPct = !simIsActive
+    ? 8
+    : daysRemaining == null
+      ? 0
+      : daysRemaining <= 0
+        ? 0
+        : Math.min(100, Math.max(4, Math.round((daysRemaining / Math.max(planValidityDays, 1)) * 100)));
 
   return (
     <div className="min-h-screen" style={{ backgroundColor: '#f6f8f6' }}>
@@ -1372,67 +1403,57 @@ export default function DashboardPage() {
             )}
 
             {/* SIM card */}
-            <div
-              className="rounded-2xl p-6 text-white"
-              style={{ backgroundColor: '#112116' }}
-            >
-              <div className="flex items-start justify-between mb-5">
-                <div>
-                  <div className="flex items-center gap-2 mb-1">
-                    {isEsimType ? (
-                      <Wifi size={14} className="text-white/50" />
-                    ) : (
-                      <Smartphone size={14} className="text-white/50" />
-                    )}
-                    <p className="text-xs font-bold uppercase tracking-widest text-white/50">
-                      {simTypeTitle}
-                    </p>
+            <div className="sim-card-shape p-6 pt-8 text-white">
+              <div className="flex items-start justify-between gap-3 mb-5">
+                <div className="flex items-start gap-3 min-w-0">
+                  <div className="sim-chip mt-5" aria-hidden>
+                    <span /><span /><span /><span /><span /><span />
                   </div>
-                  {assignedMsisdn && (
-                    <h2 className="text-3xl sm:text-4xl font-black tracking-tight">
-                      {formatMsisdn(assignedMsisdn)}
-                    </h2>
-                  )}
-                  {!assignedMsisdn && (
-                    <h2 className="text-4xl font-black tracking-tight">{headlineData}</h2>
-                  )}
-                  {assignedIccid && (
-                    <p className="text-xs font-semibold text-white/55 mt-2 tracking-wide break-all">
-                      ICCID {assignedIccid}
-                    </p>
-                  )}
-                  <p className="text-base font-black text-white mt-1">{esimTitle}</p>
-                  {assignedBundleDuration && (
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2 mb-1">
+                      {isEsimType ? (
+                        <Wifi size={14} className="text-white/50" />
+                      ) : (
+                        <Smartphone size={14} className="text-white/50" />
+                      )}
+                      <p className="text-xs font-bold uppercase tracking-widest text-white/50">
+                        {simTypeTitle}
+                      </p>
+                    </div>
+                    {assignedMsisdn && (
+                      <h2 className="text-3xl sm:text-4xl font-black tracking-tight">
+                        {formatMsisdn(assignedMsisdn)}
+                      </h2>
+                    )}
+                    {!assignedMsisdn && (
+                      <h2 className="text-4xl font-black tracking-tight">{headlineData}</h2>
+                    )}
+                    {assignedIccid && (
+                      <p className="text-xs font-semibold text-white/55 mt-2 tracking-wide break-all">
+                        ICCID {assignedIccid}
+                      </p>
+                    )}
+                    <p className="text-base font-black text-white mt-1">{esimTitle}</p>
                     <p className="text-sm font-semibold mt-1" style={{ color: '#17cf54' }}>
-                      {assignedBundleDuration}
+                      Valid for {planValidityDays} days
                     </p>
-                  )}
-                  {isEsimType && formatTripDate(activationIso) && (
-                    <p className="text-xs font-semibold text-white/60 uppercase tracking-wide mt-2">
-                      eSIM activation date
-                    </p>
-                  )}
-                  {isEsimType && formatTripDate(activationIso) && (
-                    <p className="text-sm font-bold" style={{ color: '#17cf54' }}>
-                      {formatTripDate(activationIso)}
-                    </p>
-                  )}
-                  {formatTripDate(deactivationIso) && (
-                    <p className="text-xs font-semibold text-white/60 uppercase tracking-wide mt-2">
-                      Deactivation date
-                    </p>
-                  )}
-                  {formatTripDate(deactivationIso) && (
-                    <p className="text-sm font-bold" style={{ color: '#17cf54' }}>
-                      {formatTripDate(deactivationIso)}
-                    </p>
-                  )}
-                  {purchase?.trip?.countryName && (
-                    <p className="text-sm font-semibold mt-1 text-white/80">{purchase.trip.countryName}</p>
-                  )}
+                    {!simIsActive && formatTripDate(scheduledActivationIso) && (
+                      <div className="mt-3">
+                        <p className="text-[10px] font-bold uppercase tracking-widest text-white/50">
+                          Scheduled activation
+                        </p>
+                        <p className="text-sm font-bold mt-0.5" style={{ color: '#17cf54' }}>
+                          {formatTripDate(scheduledActivationIso)}
+                        </p>
+                      </div>
+                    )}
+                    {purchase?.trip?.countryName && (
+                      <p className="text-sm font-semibold mt-2 text-white/80">{purchase.trip.countryName}</p>
+                    )}
+                  </div>
                 </div>
                 <span
-                  className="text-xs font-extrabold px-3 py-1.5 rounded-full"
+                  className="text-xs font-extrabold px-3 py-1.5 rounded-full flex-shrink-0"
                   style={
                     simIsActive
                       ? { backgroundColor: '#17cf54', color: '#112116' }
@@ -1443,17 +1464,58 @@ export default function DashboardPage() {
                 </span>
               </div>
 
-              <div
-                className="h-2.5 rounded-full overflow-hidden mb-1"
-                style={{ backgroundColor: 'rgba(255,255,255,0.15)' }}
-              >
+              {simIsActive && (formatTripDate(planStartIso) || formatTripDate(deactivationIso)) && (
+                <div className="flex items-end justify-between gap-6 mb-4">
+                  <div>
+                    <p className="text-[10px] font-bold uppercase tracking-widest text-white/50">
+                      From
+                    </p>
+                    <p className="text-sm font-bold mt-1 text-white rounded-lg px-2.5 py-1 bg-white/10 inline-block">
+                      {formatTripDate(planStartIso) ?? '—'}
+                    </p>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-[10px] font-bold uppercase tracking-widest text-white/50">
+                      To
+                    </p>
+                    <p className="text-sm font-bold mt-1 text-white rounded-lg px-2.5 py-1 bg-white/10 inline-block">
+                      {formatTripDate(deactivationIso) ?? '—'}
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              <div className="mt-1">
+                <div className="flex items-center justify-between gap-3 mb-1.5">
+                  <p className="text-[10px] font-bold uppercase tracking-widest text-white/45">
+                    Plan remaining
+                  </p>
+                  <p className="text-xs font-bold text-white">
+                    {simIsActive ? (daysRemainingLabel ?? '—') : 'Not started'}
+                  </p>
+                </div>
                 <div
-                  className="h-full rounded-full"
-                  style={{
-                    backgroundColor: simIsActive ? '#17cf54' : 'rgba(255,255,255,0.35)',
-                    width: simIsActive ? '100%' : '35%',
-                  }}
-                />
+                  className="h-2 rounded-full overflow-hidden"
+                  style={{ backgroundColor: 'rgba(255,255,255,0.15)' }}
+                  role="progressbar"
+                  aria-valuemin={0}
+                  aria-valuemax={100}
+                  aria-valuenow={validityProgressPct}
+                  aria-label="Plan time remaining"
+                >
+                  <div
+                    className="h-full rounded-full transition-all duration-500"
+                    style={{
+                      width: `${validityProgressPct}%`,
+                      backgroundColor:
+                        !simIsActive
+                          ? 'rgba(255,255,255,0.35)'
+                          : validityProgressPct <= 15
+                            ? '#f59e0b'
+                            : '#17cf54',
+                    }}
+                  />
+                </div>
               </div>
 
               {assignedMsisdn && balanceAreaValue !== '—' && (
@@ -1567,20 +1629,16 @@ export default function DashboardPage() {
                 {
                   icon: <Clock size={16} style={{ color: '#17cf54' }} />,
                   label: 'Duration',
-                  value: assignedBundleDuration ?? `${planValidityDays} days`,
-                  sub: formatTripDate(deactivationIso)
-                    ? `Deactivates ${formatTripDate(deactivationIso)}`
-                    : '30-day plan',
-                },
-                {
-                  icon: <Smartphone size={16} style={{ color: '#17cf54' }} />,
-                  label: 'ICCID',
-                  value: assignedIccid
-                    ? assignedIccid.length > 16
-                      ? `${assignedIccid.slice(0, 10)}…${assignedIccid.slice(-4)}`
-                      : assignedIccid
-                    : '—',
-                  sub: assignedIccid ? 'Imported SIM record' : 'Not provided',
+                  value: simIsActive
+                    ? (daysRemainingLabel ?? planValidityLabel)
+                    : `Valid for ${planValidityDays} days`,
+                  sub: simIsActive
+                    ? formatTripDate(deactivationIso)
+                      ? `Valid for ${planValidityDays} days · Deactivates ${formatTripDate(deactivationIso)}`
+                      : `Valid for ${planValidityDays} days`
+                    : formatTripDate(scheduledActivationIso)
+                      ? `Activates ${formatTripDate(scheduledActivationIso)}`
+                      : `${planValidityDays}-day plan`,
                 },
               ].map((s) => (
                 <div
@@ -1606,10 +1664,20 @@ export default function DashboardPage() {
                   </h3>
                 </div>
                 <p className="text-sm text-slate-600 leading-relaxed">
-                  Insert your physical SIM card into your device. Your plan will activate once the SIM is registered on the network
-                  {formatTripDate(deactivationIso)
-                    ? `, and deactivates on ${formatTripDate(deactivationIso)} (${planValidityDays} days).`
-                    : ` and lasts ${planValidityDays} days.`}
+                  {simIsActive ? (
+                    <>
+                      Your physical SIM is in use. The plan is valid for {planValidityDays} days
+                      {formatTripDate(planStartIso) ? ` from ${formatTripDate(planStartIso)}` : ''}
+                      {formatTripDate(deactivationIso)
+                        ? ` and deactivates on ${formatTripDate(deactivationIso)}.`
+                        : '.'}
+                    </>
+                  ) : (
+                    <>
+                      Insert your physical SIM card into your device. Your plan will activate once the SIM is
+                      registered on the network and is valid for {planValidityDays} days.
+                    </>
+                  )}
                 </p>
               </div>
             )}
