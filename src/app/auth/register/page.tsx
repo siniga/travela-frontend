@@ -1,5 +1,6 @@
 'use client';
 
+import LegalAcceptance from '@/components/legal/LegalAcceptance';
 import { useAuth } from '@/lib/auth-context';
 import { ArrowRight, CheckCircle, Eye, EyeOff, Loader2, Smartphone } from 'lucide-react';
 import Image from 'next/image';
@@ -23,6 +24,8 @@ export default function RegisterPage() {
   const [error, setError] = useState('');
   const [registered, setRegistered] = useState(false);
   const [firstName, setFirstName] = useState('');
+  const [acceptedLegal, setAcceptedLegal] = useState(false);
+  const [legalError, setLegalError] = useState('');
 
   const update = (field: string, value: string) =>
     setForm((f) => ({ ...f, [field]: value }));
@@ -33,8 +36,13 @@ export default function RegisterPage() {
       setError('Passwords do not match.');
       return;
     }
+    if (!acceptedLegal) {
+      setLegalError('Please confirm that you agree to the Terms & Conditions and Privacy Policy.');
+      return;
+    }
     setLoading(true);
     setError('');
+    setLegalError('');
     try {
       await register({
         name: form.name,
@@ -217,6 +225,15 @@ export default function RegisterPage() {
                 className="w-full px-4 py-3 rounded-xl border border-slate-200 text-sm text-slate-800 placeholder-slate-400 focus:outline-none focus:border-slate-400 transition-colors"
               />
             </div>
+
+            <LegalAcceptance
+              checked={acceptedLegal}
+              onChange={(value) => {
+                setAcceptedLegal(value);
+                if (value) setLegalError('');
+              }}
+              error={legalError}
+            />
 
             {error && (
               <div className="rounded-xl bg-red-50 border border-red-200 px-4 py-3">

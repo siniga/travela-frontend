@@ -139,6 +139,17 @@ function LoginContent() {
               Request a reset code
             </Link>
           </p>
+          <p className="text-center text-xs text-slate-400 mt-5 leading-relaxed">
+            By continuing you confirm you have read our{' '}
+            <Link href="/terms" className="font-semibold hover:underline" style={{ color: '#112116' }}>
+              Terms
+            </Link>{' '}
+            and{' '}
+            <Link href="/privacy" className="font-semibold hover:underline" style={{ color: '#112116' }}>
+              Privacy Policy
+            </Link>
+            .
+          </p>
         </div>
       </div>
     </div>

@@ -5,8 +5,10 @@ import {
   ArrowRight,
   Bell,
   ChevronRight,
+  FileText,
   Globe,
   HelpCircle,
+  Lock,
   LogOut,
   Receipt,
   Shield,
@@ -20,6 +22,8 @@ const menuItems = [
   { icon: <Globe size={18} />, label: 'My eSIMs', href: '/dashboard' },
   { icon: <Bell size={18} />, label: 'Notifications', href: '#' },
   { icon: <Shield size={18} />, label: 'Security', href: '#' },
+  { icon: <FileText size={18} />, label: 'Terms and Conditions', href: '/terms' },
+  { icon: <Lock size={18} />, label: 'Privacy Policy', href: '/privacy' },
   { icon: <HelpCircle size={18} />, label: 'Help & Support', href: '#' },
 ];
 

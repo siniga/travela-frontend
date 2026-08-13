@@ -1,5 +1,6 @@
 'use client';
 
+import LegalAcceptance from '@/components/legal/LegalAcceptance';
 import { useAuth } from '@/lib/auth-context';
 import {
   apiErrorMessage,
@@ -28,6 +29,8 @@ function SetPasswordFormContent() {
   const [codeExpired, setCodeExpired] = useState(false);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [success, setSuccess] = useState('');
+  const [acceptedLegal, setAcceptedLegal] = useState(false);
+  const [legalError, setLegalError] = useState('');
 
   useEffect(() => {
     const emailParam = params.get('email');
@@ -73,7 +76,12 @@ function SetPasswordFormContent() {
       setFieldErrors(nextFieldErrors);
       return;
     }
+    if (!acceptedLegal) {
+      setLegalError('Please confirm that you agree to the Terms & Conditions and Privacy Policy.');
+      return;
+    }
 
+    setLegalError('');
     setLoading(true);
     try {
       const result = await AuthApi.resetPassword({
@@ -221,6 +229,15 @@ function SetPasswordFormContent() {
               The code expires 15 minutes after your SIM was registered. Check your inbox for
               &lsquo;Your Travela SIM — Sign in to your account&rsquo;.
             </p>
+
+            <LegalAcceptance
+              checked={acceptedLegal}
+              onChange={(value) => {
+                setAcceptedLegal(value);
+                if (value) setLegalError('');
+              }}
+              error={legalError}
+            />
 
             {success && (
               <div className="rounded-xl bg-emerald-50 border border-emerald-200 px-4 py-3">

@@ -91,6 +91,25 @@ export default function Footer() {
               ))}
             </ul>
 
+            <h3 className="text-xs font-bold uppercase tracking-widest text-white/40 mt-6 mb-4">
+              Legal
+            </h3>
+            <ul className="space-y-2">
+              {[
+                { href: '/terms', label: 'Terms and Conditions' },
+                { href: '/privacy', label: 'Privacy Policy' },
+              ].map((l) => (
+                <li key={l.href}>
+                  <Link
+                    href={l.href}
+                    className="text-sm text-white/60 hover:text-white transition-colors"
+                  >
+                    {l.label}
+                  </Link>
+                </li>
+              ))}
+            </ul>
+
             <div className="flex items-center gap-3 mt-6">
               <a
                 href="https://twitter.com"
@@ -116,7 +135,15 @@ export default function Footer() {
 
         <div className="flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-white/30">
           <p>© {new Date().getFullYear()} Travela by Onnela. All rights reserved.</p>
-          <p>Available in 50+ African countries and territories</p>
+          <div className="flex items-center gap-4">
+            <Link href="/terms" className="hover:text-white/60 transition-colors">
+              Terms
+            </Link>
+            <Link href="/privacy" className="hover:text-white/60 transition-colors">
+              Privacy
+            </Link>
+            <p>Available in 50+ African countries and territories</p>
+          </div>
         </div>
       </div>
     </footer>

@@ -19,6 +19,7 @@ import Image from 'next/image';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
+import LegalAcceptance from '@/components/legal/LegalAcceptance';
 import { AuthApi, extractAuthTokenFromBody, OrderApi } from '@/lib/api';
 import { AUTH_STORAGE_SYNC } from '@/lib/auth-context';
 import {
@@ -146,6 +147,8 @@ export default function CheckoutPage() {
   const [showPasswordConfirm, setShowPasswordConfirm] = useState(false);
   const [registerError, setRegisterError] = useState('');
   const [registerSubmitting, setRegisterSubmitting] = useState(false);
+  const [acceptedLegal, setAcceptedLegal] = useState(false);
+  const [legalError, setLegalError] = useState('');
   const [activationDateError, setActivationDateError] = useState('');
 
   // OTP
@@ -351,8 +354,13 @@ export default function CheckoutPage() {
       setRegisterError('Passwords do not match.');
       return;
     }
+    if (!acceptedLegal) {
+      setLegalError('Please confirm that you agree to the Terms & Conditions and Privacy Policy.');
+      return;
+    }
 
     setRegisterError('');
+    setLegalError('');
     setActivationDateError('');
     setRegisterSubmitting(true);
     try {
@@ -1035,6 +1043,17 @@ export default function CheckoutPage() {
                   </button>
                 </div>
               </div>
+            </div>
+
+            <div className="mb-4">
+              <LegalAcceptance
+                checked={acceptedLegal}
+                onChange={(value) => {
+                  setAcceptedLegal(value);
+                  if (value) setLegalError('');
+                }}
+                error={legalError}
+              />
             </div>
 
             {registerError && (
