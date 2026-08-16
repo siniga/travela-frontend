@@ -12,6 +12,7 @@ import {
 } from '@/lib/api';
 import { useAuth } from '@/lib/auth-context';
 import { getOptimisticDataMb } from '@/lib/balance-poll';
+import { filterBundlesForRole, filterUiBundlesForRole } from '@/lib/bundle-visibility';
 import { dataMbFromAssignment } from '@/lib/esim-balance';
 import { useBalancePoll } from '@/hooks/useBalancePoll';
 import {
@@ -185,6 +186,8 @@ type ApiBundle = {
   bundle_size?: string | number | null;
   bundle_size_in_mb?: number | null;
   unit?: string | null;
+  metadata?: Record<string, unknown> | null;
+  price_usd?: string | number | null;
 };
 
 type BundlesResponse = { bundles: ApiBundle[] };
@@ -686,20 +689,24 @@ export default function DashboardPage() {
     (async () => {
       try {
         const res = await BundlesApi.list<BundlesResponse>();
-        const apiBundles = res.data?.bundles ?? [];
-        const uiBundles: TopUpBundle[] = apiBundles.map((b) => {
-          const dataMb = bundleToMb(b);
-          return {
-            id: b.id,
-            sim_bundle_id: b.sim_bundle_id ?? null,
-            name: b.alias?.trim() || fallbackBundleName(dataMb) || b.name,
-            data_mb: dataMb,
-            validity_days: b.validity_days ?? undefined,
-            price: b.price ?? undefined,
-            currency: b.currency ?? undefined,
-            tagline: bundleTagline(b.validity_days, dataMb),
-          };
-        });
+        const role = typeof user?.role === 'string' ? user.role : null;
+        const apiBundles = filterBundlesForRole(res.data?.bundles ?? [], role);
+        const uiBundles: TopUpBundle[] = filterUiBundlesForRole(
+          apiBundles.map((b) => {
+            const dataMb = bundleToMb(b);
+            return {
+              id: b.id,
+              sim_bundle_id: b.sim_bundle_id ?? null,
+              name: b.alias?.trim() || fallbackBundleName(dataMb) || b.name,
+              data_mb: dataMb,
+              validity_days: b.validity_days ?? undefined,
+              price: b.price ?? b.price_usd ?? undefined,
+              currency: b.currency ?? undefined,
+              tagline: bundleTagline(b.validity_days, dataMb),
+            };
+          }),
+          role,
+        );
         if (!cancelled) setTopUpBundles(uiBundles);
       } catch {
         if (!cancelled) setTopUpBundles([]);
@@ -711,7 +718,7 @@ export default function DashboardPage() {
     return () => {
       cancelled = true;
     };
-  }, [topUpModalOpen]);
+  }, [topUpModalOpen, user?.role]);
 
   const closeTopUpModal = useCallback((onClosed?: () => void) => {
     if (topUpModalClosing) return;
@@ -1551,7 +1558,7 @@ export default function DashboardPage() {
                     <button
                       type="button"
                       onClick={() => setShowQrCode((v) => !v)}
-                      className="w-full flex items-center justify-center gap-2 py-3.5 rounded-xl text-sm font-bold border border-white/25 text-white hover:bg-white/10 transition-colors"
+                      className="hidden sm:flex w-full items-center justify-center gap-2 py-3.5 rounded-xl text-sm font-bold border border-white/25 text-white hover:bg-white/10 transition-colors"
                     >
                       {showQrCode ? 'Hide QR Code' : 'Open QR Code'}
                     </button>
@@ -1564,12 +1571,14 @@ export default function DashboardPage() {
                 !primaryUserEsim.device_activated_at &&
                 hasActivationData &&
                 showQrCode && (
-                  <QrCodePanel
-                    userEsimId={primaryUserEsim.id}
-                    qrCodeData={assignedQrCodeData}
-                    msisdn={assignedMsisdn}
-                    iccid={assignedIccid}
-                  />
+                  <div className="hidden sm:block">
+                    <QrCodePanel
+                      userEsimId={primaryUserEsim.id}
+                      qrCodeData={assignedQrCodeData}
+                      msisdn={assignedMsisdn}
+                      iccid={assignedIccid}
+                    />
+                  </div>
                 )}
 
               {isEsimType &&

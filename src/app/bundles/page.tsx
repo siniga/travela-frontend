@@ -5,6 +5,8 @@ import Image from 'next/image';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Suspense, useEffect, useState } from 'react';
 import { BundlesApi, EsimsApi } from '@/lib/api';
+import { useAuth } from '@/lib/auth-context';
+import { filterBundlesForRole, filterUiBundlesForRole } from '@/lib/bundle-visibility';
 import { getOptimisticDataMb } from '@/lib/balance-poll';
 import {
   type Bundle,
@@ -22,6 +24,7 @@ type SimType = 'esim' | 'physical';
 function BundlesContent() {
   const params = useSearchParams();
   const router = useRouter();
+  const { user, isLoading: authLoading } = useAuth();
   const country = params.get('country') ?? 'TZ';
   const countryName = params.get('countryName') ?? 'Tanzania';
   const topupParam = params.get('topup');
@@ -35,14 +38,17 @@ function BundlesContent() {
   const [browseAllPlans, setBrowseAllPlans] = useState(false);
 
   useEffect(() => {
+    if (authLoading) return;
+
     let cancelled = false;
 
     (async () => {
       setLoading(true);
       try {
         const res = await BundlesApi.list<BundlesResponse>();
-        const apiBundles = res.data?.bundles ?? [];
-        const uiBundles = mapApiBundles(apiBundles);
+        const role = typeof user?.role === 'string' ? user.role : null;
+        const apiBundles = filterBundlesForRole(res.data?.bundles ?? [], role);
+        const uiBundles = filterUiBundlesForRole(mapApiBundles(apiBundles), role);
 
         if (!cancelled) setBundles(uiBundles);
       } catch {
@@ -55,7 +61,7 @@ function BundlesContent() {
     return () => {
       cancelled = true;
     };
-  }, [country]);
+  }, [country, authLoading, user?.role]);
 
   // Coming from a specific "Buy Now" click (e.g. landing page plan card) — skip re-choosing the bundle.
   useEffect(() => {
@@ -144,6 +150,7 @@ function BundlesContent() {
             src="/backgrounds/1.jpg"
             alt=""
             fill
+            sizes="100vw"
             className="object-cover"
           />
         </div>
@@ -260,6 +267,7 @@ function BundlesContent() {
                   src={bundleImageFor(preselectedBundle.id)}
                   alt=""
                   fill
+                  sizes="(max-width: 640px) 100vw, 33vw"
                   className="object-cover"
                 />
               </div>
@@ -317,6 +325,7 @@ function BundlesContent() {
                       src={imgSrc}
                       alt=""
                       fill
+                      sizes="(max-width: 640px) 100vw, 33vw"
                       className="object-cover"
                     />
                   </div>

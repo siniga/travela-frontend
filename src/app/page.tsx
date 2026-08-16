@@ -135,6 +135,7 @@ export default function LandingPage() {
             src="/backgrounds/7.jpg"
             alt="Zanzibar coast"
             fill
+            sizes="100vw"
             className="object-cover"
             priority
           />
@@ -207,6 +208,7 @@ export default function LandingPage() {
                       src={bundleImageFor(plan.id)}
                       alt=""
                       fill
+                      sizes="(max-width: 640px) 100vw, 33vw"
                       className="object-cover"
                     />
                   </div>
