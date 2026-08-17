@@ -68,7 +68,7 @@ export function buildBundleTagline(validityDays?: number | null, mb?: number): s
 const BUNDLE_NAME_BY_MB: Record<number, string> = {
   25: 'Starter',
   10240: 'Nomad',
-  15360: 'Nomad+',
+  15360: 'Nomad plus',
   30720: 'Heavy user',
   51200: 'Streamer',
 };
@@ -76,6 +76,13 @@ const BUNDLE_NAME_BY_MB: Record<number, string> = {
 function fallbackBundleName(mb?: number): string | undefined {
   if (mb == null) return undefined;
   return BUNDLE_NAME_BY_MB[mb];
+}
+
+/** Display labels that override API aliases / raw names. */
+export function displayBundleName(name?: string | null): string {
+  const trimmed = (name ?? '').trim();
+  if (trimmed.toLowerCase() === 'nomad+') return 'Nomad plus';
+  return trimmed;
 }
 
 /** Starter (25 MB) is not offered for purchase — hide it from every catalog. */
@@ -91,7 +98,7 @@ export function mapApiBundles(apiBundles: ApiBundle[]): Bundle[] {
       return {
         id: b.id,
         sim_bundle_id: b.sim_bundle_id ?? null,
-        name: b.alias?.trim() || fallbackBundleName(dataMb) || b.name,
+        name: displayBundleName(b.alias?.trim() || fallbackBundleName(dataMb) || b.name),
         data_mb: dataMb,
         validity_days: b.validity_days ?? undefined,
         price: b.price ?? undefined,

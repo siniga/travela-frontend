@@ -12,7 +12,7 @@ import {
 } from '@/lib/api';
 import { useAuth } from '@/lib/auth-context';
 import { getOptimisticDataMb } from '@/lib/balance-poll';
-import { isHiddenCatalogBundle } from '@/lib/bundles';
+import { displayBundleName, isHiddenCatalogBundle } from '@/lib/bundles';
 import { dataMbFromAssignment } from '@/lib/esim-balance';
 import { useBalancePoll } from '@/hooks/useBalancePoll';
 import {
@@ -268,7 +268,7 @@ function bundleTagline(validityDays?: number | null, mb?: number) {
 const BUNDLE_NAME_BY_MB: Record<number, string> = {
   25: 'Starter',
   10240: 'Nomad',
-  15360: 'Nomad+',
+  15360: 'Nomad plus',
   30720: 'Heavy user',
   51200: 'Streamer',
 };
@@ -694,7 +694,7 @@ export default function DashboardPage() {
             return {
               id: b.id,
               sim_bundle_id: b.sim_bundle_id ?? null,
-              name: b.alias?.trim() || fallbackBundleName(dataMb) || b.name,
+              name: displayBundleName(b.alias?.trim() || fallbackBundleName(dataMb) || b.name),
               data_mb: dataMb,
               validity_days: b.validity_days ?? undefined,
               price: b.price ?? undefined,
@@ -967,14 +967,15 @@ export default function DashboardPage() {
     assignedSim?.esim?.has_activation_data === true;
   const activationEmailSentAt =
     primaryUserEsim?.activation_email_sent_at ?? null;
-  const assignedBundleName =
+  const assignedBundleName = displayBundleName(
     apiBundle?.alias ??
-    fallbackBundleName(coerceNumber(apiBundle?.data_mb) ?? undefined) ??
-    apiBundle?.name ??
-    assignedSim?.bundle?.name ??
-    primaryBundle?.name ??
-    primaryUserEsim?.esim?.description ??
-    null;
+      fallbackBundleName(coerceNumber(apiBundle?.data_mb) ?? undefined) ??
+      apiBundle?.name ??
+      assignedSim?.bundle?.name ??
+      primaryBundle?.name ??
+      primaryUserEsim?.esim?.description ??
+      null
+  ) || null;
   const assignedBundleDuration =
     apiBundle?.duration ??
     (apiBundle?.validity_days ? `${apiBundle.validity_days} days` : null) ??
