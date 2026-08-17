@@ -12,6 +12,7 @@ import {
 } from '@/lib/api';
 import { useAuth } from '@/lib/auth-context';
 import { getOptimisticDataMb } from '@/lib/balance-poll';
+import { isHiddenCatalogBundle } from '@/lib/bundles';
 import { dataMbFromAssignment } from '@/lib/esim-balance';
 import { useBalancePoll } from '@/hooks/useBalancePoll';
 import {
@@ -687,19 +688,21 @@ export default function DashboardPage() {
       try {
         const res = await BundlesApi.list<BundlesResponse>();
         const apiBundles = res.data?.bundles ?? [];
-        const uiBundles: TopUpBundle[] = apiBundles.map((b) => {
-          const dataMb = bundleToMb(b);
-          return {
-            id: b.id,
-            sim_bundle_id: b.sim_bundle_id ?? null,
-            name: b.alias?.trim() || fallbackBundleName(dataMb) || b.name,
-            data_mb: dataMb,
-            validity_days: b.validity_days ?? undefined,
-            price: b.price ?? undefined,
-            currency: b.currency ?? undefined,
-            tagline: bundleTagline(b.validity_days, dataMb),
-          };
-        });
+        const uiBundles: TopUpBundle[] = apiBundles
+          .map((b) => {
+            const dataMb = bundleToMb(b);
+            return {
+              id: b.id,
+              sim_bundle_id: b.sim_bundle_id ?? null,
+              name: b.alias?.trim() || fallbackBundleName(dataMb) || b.name,
+              data_mb: dataMb,
+              validity_days: b.validity_days ?? undefined,
+              price: b.price ?? undefined,
+              currency: b.currency ?? undefined,
+              tagline: bundleTagline(b.validity_days, dataMb),
+            };
+          })
+          .filter((b) => !isHiddenCatalogBundle(b));
         if (!cancelled) setTopUpBundles(uiBundles);
       } catch {
         if (!cancelled) setTopUpBundles([]);

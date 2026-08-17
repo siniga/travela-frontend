@@ -78,18 +78,26 @@ function fallbackBundleName(mb?: number): string | undefined {
   return BUNDLE_NAME_BY_MB[mb];
 }
 
+/** Starter (25 MB) is not offered for purchase — hide it from every catalog. */
+export function isHiddenCatalogBundle(bundle: { name?: string; data_mb?: number }): boolean {
+  if (bundle.data_mb === 25) return true;
+  return (bundle.name ?? '').trim().toLowerCase() === 'starter';
+}
+
 export function mapApiBundles(apiBundles: ApiBundle[]): Bundle[] {
-  return apiBundles.map((b) => {
-    const dataMb = toMb(b);
-    return {
-      id: b.id,
-      sim_bundle_id: b.sim_bundle_id ?? null,
-      name: b.alias?.trim() || fallbackBundleName(dataMb) || b.name,
-      data_mb: dataMb,
-      validity_days: b.validity_days ?? undefined,
-      price: b.price ?? undefined,
-      currency: b.currency ?? undefined,
-      tagline: buildBundleTagline(b.validity_days, dataMb),
-    };
-  });
+  return apiBundles
+    .map((b) => {
+      const dataMb = toMb(b);
+      return {
+        id: b.id,
+        sim_bundle_id: b.sim_bundle_id ?? null,
+        name: b.alias?.trim() || fallbackBundleName(dataMb) || b.name,
+        data_mb: dataMb,
+        validity_days: b.validity_days ?? undefined,
+        price: b.price ?? undefined,
+        currency: b.currency ?? undefined,
+        tagline: buildBundleTagline(b.validity_days, dataMb),
+      };
+    })
+    .filter((b) => !isHiddenCatalogBundle(b));
 }
