@@ -15,7 +15,6 @@ import {
   Smartphone,
   Wifi,
 } from 'lucide-react';
-import Image from 'next/image';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
@@ -831,9 +830,9 @@ export default function CheckoutPage() {
       className={`min-h-screen ${checkoutPageTransitionClass(checkoutRevealed)}`}
       style={{ backgroundColor: '#f6f8f6' }}
     >
-      {/* Top bar */}
+      {/* Back + steps — same width as the body cards */}
       <div className="bg-white border-b border-slate-100">
-        <div className="max-w-3xl mx-auto px-4 py-4 flex items-center gap-4">
+        <div className="max-w-3xl mx-auto px-4 pt-4 pb-5">
           <button
             onClick={() => {
               if (step === 'register') router.push('/bundles?country=TZ&countryName=Tanzania');
@@ -843,48 +842,49 @@ export default function CheckoutPage() {
                 else setStep('otp');
               }
             }}
-            className="text-slate-400 hover:text-slate-700 transition-colors"
+            className="text-slate-400 hover:text-slate-700 transition-colors mb-4"
           >
             <ArrowLeft size={20} />
           </button>
-          <Image src="/logos/travela_dark.png" alt="Travela" width={90} height={30} className="h-7 w-auto object-contain" />
-        </div>
-      </div>
-
-      {/* Step indicator */}
-      <div className="bg-white border-b border-slate-100">
-        <div className="max-w-3xl mx-auto px-4 py-4">
-          <div className="flex items-center gap-0">
-            {visibleSteps.map((s, i) => (
-              <div key={s.id} className="flex items-center flex-1">
-                <div className="flex flex-col items-center gap-1 flex-shrink-0">
+          <div className="flex items-start w-full">
+            {visibleSteps.map((s, i) => {
+              const isFirst = i === 0;
+              const isLast = i === visibleSteps.length - 1;
+              return (
+                <div key={s.id} className={`flex items-start min-w-0 ${isLast ? '' : 'flex-1'}`}>
                   <div
-                    className="w-8 h-8 rounded-full flex items-center justify-center text-xs font-extrabold transition-colors"
-                    style={
-                      i < currentStepIdx
-                        ? { backgroundColor: '#17cf54', color: '#112116' }
-                        : i === currentStepIdx
-                        ? { backgroundColor: '#112116', color: 'white' }
-                        : { backgroundColor: '#e2e8f0', color: '#94a3b8' }
-                    }
+                    className={`flex flex-col gap-1 flex-shrink-0 ${
+                      isFirst && !isLast ? 'items-start' : isLast ? 'items-end' : 'items-center'
+                    }`}
                   >
-                    {i < currentStepIdx ? <Check size={14} /> : i + 1}
+                    <div
+                      className="w-8 h-8 rounded-full flex items-center justify-center text-xs font-extrabold transition-colors"
+                      style={
+                        i < currentStepIdx
+                          ? { backgroundColor: '#17cf54', color: '#112116' }
+                          : i === currentStepIdx
+                          ? { backgroundColor: '#112116', color: 'white' }
+                          : { backgroundColor: '#e2e8f0', color: '#94a3b8' }
+                      }
+                    >
+                      {i < currentStepIdx ? <Check size={14} /> : i + 1}
+                    </div>
+                    <span
+                      className="text-xs font-semibold hidden sm:block whitespace-nowrap"
+                      style={{ color: i <= currentStepIdx ? '#112116' : '#94a3b8' }}
+                    >
+                      {s.label}
+                    </span>
                   </div>
-                  <span
-                    className="text-xs font-semibold hidden sm:block"
-                    style={{ color: i <= currentStepIdx ? '#112116' : '#94a3b8' }}
-                  >
-                    {s.label}
-                  </span>
+                  {!isLast && (
+                    <div
+                      className="h-0.5 flex-1 mx-2 mt-4 rounded transition-colors"
+                      style={{ backgroundColor: i < currentStepIdx ? '#17cf54' : '#e2e8f0' }}
+                    />
+                  )}
                 </div>
-                {i < visibleSteps.length - 1 && (
-                  <div
-                    className="h-0.5 flex-1 mx-2 rounded transition-colors"
-                    style={{ backgroundColor: i < currentStepIdx ? '#17cf54' : '#e2e8f0' }}
-                  />
-                )}
-              </div>
-            ))}
+              );
+            })}
           </div>
         </div>
       </div>
