@@ -6,7 +6,6 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { Suspense, useEffect, useState } from 'react';
 import { BundlesApi, EsimsApi } from '@/lib/api';
 import { useAuth } from '@/lib/auth-context';
-import { filterBundlesForRole, filterUiBundlesForRole } from '@/lib/bundle-visibility';
 import { getOptimisticDataMb } from '@/lib/balance-poll';
 import {
   type Bundle,
@@ -24,7 +23,7 @@ type SimType = 'esim' | 'physical';
 function BundlesContent() {
   const params = useSearchParams();
   const router = useRouter();
-  const { user, isLoading: authLoading } = useAuth();
+  const { isLoading: authLoading } = useAuth();
   const country = params.get('country') ?? 'TZ';
   const countryName = params.get('countryName') ?? 'Tanzania';
   const topupParam = params.get('topup');
@@ -35,7 +34,6 @@ function BundlesContent() {
   const [loading, setLoading] = useState(true);
   const [selectedBundleId, setSelectedBundleId] = useState<string | number | null>(null);
   const [simType, setSimType] = useState<SimType>('esim');
-  const [browseAllPlans, setBrowseAllPlans] = useState(false);
 
   useEffect(() => {
     if (authLoading) return;
@@ -46,11 +44,7 @@ function BundlesContent() {
       setLoading(true);
       try {
         const res = await BundlesApi.list<BundlesResponse>();
-        const role = typeof user?.role === 'string' ? user.role : null;
-        const apiBundles = filterBundlesForRole(res.data?.bundles ?? [], role);
-        const uiBundles = filterUiBundlesForRole(mapApiBundles(apiBundles), role);
-
-        if (!cancelled) setBundles(uiBundles);
+        if (!cancelled) setBundles(mapApiBundles(res.data?.bundles ?? []));
       } catch {
         if (!cancelled) setBundles([]);
       } finally {
@@ -61,7 +55,7 @@ function BundlesContent() {
     return () => {
       cancelled = true;
     };
-  }, [country, authLoading, user?.role]);
+  }, [country, authLoading]);
 
   // Coming from a specific "Buy Now" click (e.g. landing page plan card) — skip re-choosing the bundle.
   useEffect(() => {
@@ -71,10 +65,6 @@ function BundlesContent() {
   }, [bundleIdParam, bundles]);
 
   const selectedBundle = bundles.find((b) => String(b.id) === String(selectedBundleId)) ?? null;
-  const preselectedBundle =
-    bundleIdParam && !browseAllPlans
-      ? bundles.find((b) => String(b.id) === String(bundleIdParam)) ?? null
-      : null;
 
   const handleCheckout = async () => {
     if (!selectedBundle) return;
@@ -159,12 +149,10 @@ function BundlesContent() {
             Tanzania · Zanzibar
           </p>
           <h1 className="text-3xl sm:text-4xl font-extrabold text-white mb-2">
-            {preselectedBundle ? 'How Would You Like to Connect?' : 'Choose Your Data Plan'}
+            Choose Your Data Plan
           </h1>
           <p className="text-white/60 text-base">
-            {preselectedBundle
-              ? 'For eSIM, you choose your activation date at checkout.'
-              : '30 days of data per plan. For eSIM, you choose your activation date at checkout.'}
+            30 days of data per plan. For eSIM, you choose your activation date at checkout.
           </p>
         </div>
       </div>
@@ -258,48 +246,6 @@ function BundlesContent() {
         {loading ? (
           <div className="flex items-center justify-center py-20">
             <Loader2 size={28} className="animate-spin text-slate-400" />
-          </div>
-        ) : preselectedBundle ? (
-          <div className="max-w-sm mx-auto">
-            <div className="rounded-2xl overflow-hidden border-2 bg-white shadow-md" style={{ borderColor: '#112116' }}>
-              <div className="relative h-40">
-                <Image
-                  src={bundleImageFor(preselectedBundle.id)}
-                  alt=""
-                  fill
-                  sizes="(max-width: 640px) 100vw, 33vw"
-                  className="object-cover"
-                />
-              </div>
-              <div className="p-5">
-                <div className="flex items-center justify-between mb-0.5">
-                  <p className="text-lg font-black text-slate-900">{preselectedBundle.name}</p>
-                  <span
-                    className="inline-flex items-center gap-1 text-xs font-bold px-2.5 py-0.5 rounded-full flex-shrink-0"
-                    style={{ backgroundColor: '#17cf54', color: '#112116' }}
-                  >
-                    <Check size={12} /> Selected
-                  </span>
-                </div>
-                <h3 className="text-2xl font-black text-slate-900 mb-1 tracking-tight">
-                  {formatMb(preselectedBundle.data_mb)}
-                </h3>
-                {preselectedBundle.tagline && (
-                  <p className="text-xs font-semibold text-slate-600 mb-1">{preselectedBundle.tagline}</p>
-                )}
-                <p className="text-sm text-slate-500">
-                  {preselectedBundle.validity_days ?? 30} days · {preselectedBundle.currency ?? 'USD'}{' '}
-                  {Number(preselectedBundle.price ?? 0).toFixed(2)}
-                </p>
-              </div>
-            </div>
-            <button
-              type="button"
-              onClick={() => setBrowseAllPlans(true)}
-              className="block w-full text-center mt-3 text-xs font-bold text-slate-500 hover:text-slate-800"
-            >
-              Choose a different plan
-            </button>
           </div>
         ) : bundles.length === 0 ? (
           <div className="text-center py-20">
