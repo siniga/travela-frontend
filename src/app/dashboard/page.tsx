@@ -296,35 +296,11 @@ function bundleToMb(bundle: ApiBundle): number | undefined {
   return undefined;
 }
 
-function resolveBundleDataMb(
-  userBundle?: BundleDetail | null,
-  latestOrderBundle?: BundleDetail | null,
-  assignedBundle?: EsimAssignmentPayload['bundle'],
-  purchaseBundle?: { data_mb?: number },
-  orderItemDataAmount?: number | null
-): number | undefined {
-  const fromUser = coerceNumber(userBundle?.data_mb);
-  if (fromUser != null && fromUser > 0) return fromUser;
-
-  const fromLatestOrder = coerceNumber(latestOrderBundle?.data_mb);
-  if (fromLatestOrder != null && fromLatestOrder > 0) return fromLatestOrder;
-
-  const fromAssigned = coerceNumber(assignedBundle?.data_mb);
-  if (fromAssigned != null && fromAssigned > 0) return fromAssigned;
-
-  const fromPurchase = coerceNumber(purchaseBundle?.data_mb);
-  if (fromPurchase != null && fromPurchase > 0) return fromPurchase;
-
-  const fromOrderItem = coerceNumber(orderItemDataAmount);
-  if (fromOrderItem != null && fromOrderItem > 0) return fromOrderItem;
-
-  return undefined;
-}
-
-/** Balance area shows bundle data allowance (data_mb) first. */
-function displayDataBalance(bundleDataMb?: number) {
-  if (bundleDataMb != null && bundleDataMb > 0) return formatMb(bundleDataMb);
-  return '—';
+/** Balance area shows live DATA from user_esims.balances. */
+function displayDataBalance(dataMb?: number | null) {
+  if (dataMb == null || !Number.isFinite(dataMb)) return '—';
+  if (dataMb >= 1024) return `${(dataMb / 1024).toFixed(0)} GB`;
+  return `${Math.round(dataMb).toLocaleString()} MB`;
 }
 
 function formatTripDate(iso?: string | null) {
@@ -667,7 +643,7 @@ export default function DashboardPage() {
   const loadEsimsRef = useRef(loadEsims);
   loadEsimsRef.current = loadEsims;
 
-  const { isPolling: balancePolling, optimisticDataMb, confirmedDataMb } = useBalancePoll({
+  const { isPolling: balancePolling, confirmedDataMb } = useBalancePoll({
     onBalanceReady: () => {
       void loadEsimsRef.current();
     },
@@ -943,7 +919,6 @@ export default function DashboardPage() {
   const primaryUserEsim = userEsims[0] ?? null;
   const primaryBundle = purchase?.items?.[0]?.bundle;
   const apiBundle = primaryUserEsim?.bundle ?? latestOrderBundle ?? null;
-  const orderItemDataAmount = coerceNumber(primaryUserEsim?.order_item?.data_amount);
 
   const assignedMsisdn =
     assignedSim?.esim?.msisdn ??
@@ -982,32 +957,17 @@ export default function DashboardPage() {
     assignedSim?.bundle?.duration ??
     (primaryBundle?.validity_days ? `${primaryBundle.validity_days} days` : null);
   const planValidityLabel = assignedBundleDuration ?? '30 days';
-  const bundleDataMb = resolveBundleDataMb(
-    primaryUserEsim?.bundle,
-    latestOrderBundle,
-    assignedSim?.bundle,
-    primaryBundle,
-    orderItemDataAmount
-  );
 
   const carrierDataMb = dataMbFromAssignment(primaryUserEsim);
-  const displayDataMb =
-    confirmedDataMb ??
-    optimisticDataMb ??
-    carrierDataMb ??
-    bundleDataMb;
+  const displayDataMb = balancePolling
+    ? null
+    : (confirmedDataMb ?? carrierDataMb);
 
   const balanceStatusSub = balancePolling
-    ? 'Updating with carrier balance…'
-    : confirmedDataMb != null
-      ? 'Live balance from carrier'
-      : optimisticDataMb != null
-        ? 'Estimated until carrier confirms'
-        : bundleDataMb != null
-          ? apiBundle?.name
-            ? `${apiBundle.name} bundle`
-            : 'Bundle data allowance'
-          : 'No bundle data';
+    ? 'This can take a minute — please wait'
+    : confirmedDataMb != null || carrierDataMb != null
+      ? 'Live data remaining'
+      : 'Waiting for data balance';
 
   const simType = primaryUserEsim?.esim?.sim_type ?? assignedSim?.esim?.sim_type ?? 'esim';
   const isEsimType = simType.toLowerCase() !== 'physical';
@@ -1036,8 +996,8 @@ export default function DashboardPage() {
       ? userEsims.length
       : (purchase?.items?.reduce((s, c) => s + c.quantity, 0) ?? 0);
 
-  const headlineData = displayDataBalance(displayDataMb);
-  const balanceAreaValue = displayDataBalance(displayDataMb);
+  const headlineData = balancePolling ? 'Loading…' : displayDataBalance(displayDataMb);
+  const balanceAreaValue = balancePolling ? 'Loading…' : displayDataBalance(displayDataMb);
 
   const esimTitle =
     assignedBundleName ??
@@ -1109,8 +1069,9 @@ export default function DashboardPage() {
 
       {balancePolling ? (
         <div className="bg-emerald-50 border-b border-emerald-100 px-4 py-3">
-          <p className="max-w-5xl mx-auto text-sm text-emerald-800">
-            Balance updated with your purchase. Waiting for carrier confirmation (usually within a few minutes)…
+          <p className="max-w-5xl mx-auto text-sm text-emerald-800 flex items-center gap-2">
+            <Loader2 size={16} className="shrink-0 animate-spin" />
+            Balance is loading. This can take a minute — please wait while we confirm your data.
           </p>
         </div>
       ) : null}
@@ -1522,8 +1483,8 @@ export default function DashboardPage() {
                 </div>
               </div>
 
-              {assignedMsisdn && balanceAreaValue !== '—' && (
-                <p className="text-sm text-white/60 mt-3">{balanceAreaValue} data plan</p>
+              {assignedMsisdn && !balancePolling && balanceAreaValue !== '—' && (
+                <p className="text-sm text-white/60 mt-3">{balanceAreaValue} remaining</p>
               )}
 
               {isEsimType && primaryUserEsim?.id && (
@@ -1629,7 +1590,14 @@ export default function DashboardPage() {
                 {
                   icon: <Globe size={16} style={{ color: '#17cf54' }} />,
                   label: 'Balance',
-                  value: balanceAreaValue,
+                  value: balancePolling ? (
+                    <span className="inline-flex items-center gap-2">
+                      <Loader2 size={18} className="animate-spin shrink-0" style={{ color: '#17cf54' }} />
+                      Loading…
+                    </span>
+                  ) : (
+                    balanceAreaValue
+                  ),
                   sub: balanceStatusSub,
                 },
                 {

@@ -52,9 +52,9 @@ export function useBalancePoll(options?: { onBalanceReady?: () => void }) {
       if (!body.balance_ready) return false;
 
       const dataMb = dataMbFromBalanceStatusBody(body);
-      if (dataMb != null) {
-        setConfirmedDataMb(dataMb);
-      }
+      if (dataMb == null) return false;
+
+      setConfirmedDataMb(dataMb);
 
       clearBalancePoll();
       setContext(null);
