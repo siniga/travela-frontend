@@ -1,7 +1,7 @@
 'use client';
 
 import { useAuth } from '@/lib/auth-context';
-import { Mail, X } from 'lucide-react';
+import { Mail } from 'lucide-react';
 import Image from 'next/image';
 import Link from 'next/link';
 
@@ -112,13 +112,17 @@ export default function Footer() {
 
             <div className="flex items-center gap-3 mt-6">
               <a
-                href="https://twitter.com"
+                href="https://www.instagram.com/thetravela_esim?igsh=a2k5ajE2bTAyenMw"
                 target="_blank"
                 rel="noopener noreferrer"
                 className="w-8 h-8 rounded-full bg-white/10 flex items-center justify-center hover:bg-white/20 transition-colors"
-                aria-label="Twitter"
+                aria-label="Instagram"
               >
-                <X size={15} />
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <rect x="2" y="2" width="20" height="20" rx="5" ry="5" />
+                  <circle cx="12" cy="12" r="4" />
+                  <circle cx="17.5" cy="6.5" r="0.5" fill="currentColor" stroke="none" />
+                </svg>
               </a>
               <a
                 href="mailto:hello@thetravela.com"
@@ -142,7 +146,6 @@ export default function Footer() {
             <Link href="/privacy" className="hover:text-white/60 transition-colors">
               Privacy
             </Link>
-            <p>Available in 50+ African countries and territories</p>
           </div>
         </div>
       </div>

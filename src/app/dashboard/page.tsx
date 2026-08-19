@@ -1713,7 +1713,6 @@ export default function DashboardPage() {
               Travela · by Onnela · For A More Enjoyable Life
             </span>
           </div>
-          <p className="text-xs text-white/30">Available in 50+ African countries</p>
         </div>
       </div>
     </div>
