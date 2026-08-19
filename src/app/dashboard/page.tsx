@@ -136,6 +136,8 @@ interface BundleDetail {
   id?: number;
   name?: string | null;
   alias?: string | null;
+  type?: string | null;
+  type_name?: string | null;
   data_mb?: number | null;
   validity_days?: number | null;
   duration_days?: number | null;
@@ -245,6 +247,8 @@ function normalizeBundle(raw: unknown): BundleDetail | null {
     id: coerceNumber(b.id),
     name: typeof b.name === 'string' ? b.name : null,
     alias: typeof b.alias === 'string' ? b.alias : null,
+    type: typeof b.type === 'string' ? b.type : null,
+    type_name: typeof b.type_name === 'string' ? b.type_name : null,
     data_mb: data_mb ?? null,
     validity_days: validity_days ?? null,
     duration_days: coerceNumber(b.duration_days) ?? null,
@@ -945,10 +949,12 @@ export default function DashboardPage() {
   const assignedBundleName = displayBundleName(
     apiBundle?.alias ??
       fallbackBundleName(coerceNumber(apiBundle?.data_mb) ?? undefined) ??
+      apiBundle?.type_name ??
+      apiBundle?.type ??
       apiBundle?.name ??
+      assignedSim?.bundle?.type_name ??
       assignedSim?.bundle?.name ??
       primaryBundle?.name ??
-      primaryUserEsim?.esim?.description ??
       null
   ) || null;
   const assignedBundleDuration =

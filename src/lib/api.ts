@@ -362,6 +362,9 @@ export type EsimAssignmentPayload = {
   };
   bundle?: {
     name?: string | null;
+    alias?: string | null;
+    type?: string | null;
+    type_name?: string | null;
     duration?: string | null;
     data_mb?: number | null;
   };
