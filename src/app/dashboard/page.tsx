@@ -1033,13 +1033,33 @@ export default function DashboardPage() {
       deactivationIsoFrom(scheduledActivationIso, planValidityDays));
   const daysRemaining = simIsActive ? daysUntil(deactivationIso) : null;
   const daysRemainingLabel = daysLeftLabel(daysRemaining);
-  const validityProgressPct = !simIsActive
-    ? 8
-    : daysRemaining == null
-      ? 0
-      : daysRemaining <= 0
+
+  const purchasedDataMb = orders
+    .filter(isPaidOrder)
+    .flatMap((o) => o.order_items ?? [])
+    .reduce((sum, item) => sum + (coerceNumber(item.data_amount) ?? 0), 0);
+  const bundleTotalMb =
+    purchasedDataMb ||
+    coerceNumber(apiBundle?.data_mb) ||
+    coerceNumber(primaryUserEsim?.order_item?.data_amount) ||
+    coerceNumber(latestPaidOrder?.order_items?.[0]?.data_amount) ||
+    coerceNumber(primaryBundle?.data_mb);
+  const remainingMb = displayDataMb;
+  const dataRemainingLabel = balancePolling
+    ? 'Loading…'
+    : remainingMb != null
+      ? displayDataBalance(remainingMb)
+      : !simIsActive
+        ? 'Not started'
+        : '—';
+  const dataProgressPct =
+    remainingMb == null || !bundleTotalMb
+      ? simIsActive
         ? 0
-        : Math.min(100, Math.max(4, Math.round((daysRemaining / Math.max(planValidityDays, 1)) * 100)));
+        : 8
+      : remainingMb <= 0
+        ? 0
+        : Math.min(100, Math.max(4, Math.round((remainingMb / bundleTotalMb) * 100)));
 
   return (
     <div className="min-h-screen" style={{ backgroundColor: '#f6f8f6' }}>
@@ -1453,10 +1473,10 @@ export default function DashboardPage() {
               <div className="mt-1">
                 <div className="flex items-center justify-between gap-3 mb-1.5">
                   <p className="text-[10px] font-bold uppercase tracking-widest text-white/45">
-                    Plan remaining
+                    Data remaining
                   </p>
                   <p className="text-xs font-bold text-white">
-                    {simIsActive ? (daysRemainingLabel ?? '—') : 'Not started'}
+                    {dataRemainingLabel}
                   </p>
                 </div>
                 <div
@@ -1465,27 +1485,23 @@ export default function DashboardPage() {
                   role="progressbar"
                   aria-valuemin={0}
                   aria-valuemax={100}
-                  aria-valuenow={validityProgressPct}
-                  aria-label="Plan time remaining"
+                  aria-valuenow={dataProgressPct}
+                  aria-label="Data remaining"
                 >
                   <div
                     className="h-full rounded-full transition-all duration-500"
                     style={{
-                      width: `${validityProgressPct}%`,
+                      width: `${dataProgressPct}%`,
                       backgroundColor:
                         !simIsActive
                           ? 'rgba(255,255,255,0.35)'
-                          : validityProgressPct <= 15
+                          : dataProgressPct <= 15
                             ? '#f59e0b'
                             : '#17cf54',
                     }}
                   />
                 </div>
               </div>
-
-              {assignedMsisdn && !balancePolling && balanceAreaValue !== '—' && (
-                <p className="text-sm text-white/60 mt-3">{balanceAreaValue} remaining</p>
-              )}
 
               {isEsimType && primaryUserEsim?.id && (
                 <div
