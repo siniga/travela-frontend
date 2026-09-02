@@ -7,11 +7,11 @@ import Footer from '@/components/layout/Footer';
 export const metadata: Metadata = {
   title: 'Travela — Stay Connected Across Africa',
   description:
-    'Buy and activate local eSIM data plans instantly across 50+ African countries. No roaming fees, no plastic cards.',
+    'Buy and activate local eSIM data plans instantly across Africa. No roaming fees, no plastic cards.',
   keywords: ['eSIM', 'Africa', 'travel', 'data', 'roaming', 'connectivity'],
   openGraph: {
     title: 'Travela — Stay Connected Across Africa',
-    description: 'Instant eSIM bundles for 50+ African countries.',
+    description: 'Instant eSIM bundles across Africa.',
     type: 'website',
   },
 };

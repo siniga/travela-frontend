@@ -1070,13 +1070,13 @@ export default function DashboardPage() {
   return (
     <div className="min-h-screen" style={{ backgroundColor: '#f6f8f6' }}>
       {/* Header bar */}
-      <div className="bg-white border-b border-slate-100 px-4 py-5">
-        <div className="max-w-5xl mx-auto flex items-start justify-between gap-4">
-          <div>
+      <div className="bg-white border-b border-slate-100 px-4 py-4 sm:py-5">
+        <div className="max-w-5xl mx-auto flex items-center justify-between gap-3">
+          <div className="min-w-0">
             <p className="text-xs font-bold uppercase tracking-widest text-slate-400 mb-0.5">
               Dashboard
             </p>
-            <h1 className="text-xl font-extrabold text-slate-900">
+            <h1 className="text-base sm:text-xl font-extrabold text-slate-900 truncate">
               {isAuthenticated
                 ? `Welcome back, ${user?.name?.split(' ')[0] ?? 'Traveller'}`
                 : 'Your eSIM Dashboard'}
@@ -1085,7 +1085,7 @@ export default function DashboardPage() {
           <button
             type="button"
             onClick={() => setTopUpModalOpen(true)}
-            className="flex-shrink-0 px-4 py-2.5 rounded-xl text-sm font-bold text-white hover:opacity-90 transition-opacity"
+            className="flex-shrink-0 px-3 sm:px-4 py-2 sm:py-2.5 rounded-xl text-sm font-bold text-white hover:opacity-90 transition-opacity"
             style={{ backgroundColor: '#112116' }}
           >
             Top Up
@@ -1394,9 +1394,9 @@ export default function DashboardPage() {
             )}
 
             {/* SIM card */}
-            <div className="sim-card-shape p-6 pt-8 text-white">
-              <div className="flex items-start justify-between gap-3 mb-5">
-                <div className="flex items-start gap-3 min-w-0">
+            <div className="sim-card-shape p-4 sm:p-6 pt-7 sm:pt-8 text-white">
+              <div className="flex items-start justify-between gap-3 mb-5 flex-wrap">
+                <div className="flex items-start gap-3 min-w-0 flex-1">
                   <div className="sim-chip mt-5" aria-hidden>
                     <span /><span /><span /><span /><span /><span />
                   </div>
@@ -1412,12 +1412,12 @@ export default function DashboardPage() {
                       </p>
                     </div>
                     {assignedMsisdn && (
-                      <h2 className="text-3xl sm:text-4xl font-black tracking-tight">
+                      <h2 className="text-2xl sm:text-4xl font-black tracking-tight break-all leading-tight">
                         {formatMsisdn(assignedMsisdn)}
                       </h2>
                     )}
                     {!assignedMsisdn && (
-                      <h2 className="text-4xl font-black tracking-tight">{headlineData}</h2>
+                      <h2 className="text-3xl sm:text-4xl font-black tracking-tight">{headlineData}</h2>
                     )}
                     {assignedIccid && (
                       <p className="text-xs font-semibold text-white/55 mt-2 tracking-wide break-all">
@@ -1513,7 +1513,7 @@ export default function DashboardPage() {
                 <div
                   className={
                     !primaryUserEsim.device_activated_at && hasActivationData
-                      ? 'mt-5 grid grid-cols-1 sm:grid-cols-2 gap-3'
+                      ? 'mt-5 grid grid-cols-1 gap-3'
                       : 'mt-5'
                   }
                 >
@@ -1595,7 +1595,7 @@ export default function DashboardPage() {
             </div>
 
             {/* Stats */}
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 sm:gap-4">
               {[
                 {
                   icon: isEsimType ? (
@@ -1636,16 +1636,16 @@ export default function DashboardPage() {
                       ? `Activates ${formatTripDate(scheduledActivationIso)}`
                       : `${planValidityDays}-day plan`,
                 },
-              ].map((s) => (
+              ].map((s, i, arr) => (
                 <div
                   key={s.label}
-                  className="bg-white rounded-xl border border-slate-100 p-4"
+                  className={`bg-white rounded-xl border border-slate-100 p-4${i === arr.length - 1 && arr.length % 2 !== 0 ? ' col-span-2 sm:col-span-1' : ''}`}
                 >
                   <div className="flex items-center gap-2 mb-2 text-xs font-bold uppercase tracking-wide text-slate-400">
                     {s.icon} {s.label}
                   </div>
-                  <p className="text-xl font-extrabold text-slate-900">{s.value}</p>
-                  <p className="text-xs text-slate-400 mt-0.5">{s.sub}</p>
+                  <p className="text-lg sm:text-xl font-extrabold text-slate-900">{s.value}</p>
+                  <p className="text-xs text-slate-400 mt-0.5 leading-snug">{s.sub}</p>
                 </div>
               ))}
             </div>
@@ -1705,7 +1705,6 @@ export default function DashboardPage() {
               Travela · by Onnela · For A More Enjoyable Life
             </span>
           </div>
-          <p className="text-xs text-white/30">Available in 50+ African countries</p>
         </div>
       </div>
     </div>
