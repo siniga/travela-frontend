@@ -34,9 +34,9 @@ function LoginContent() {
 
   useEffect(() => {
     if (!isLoading && isAuthenticated) {
-      router.replace('/dashboard');
+      router.replace(redirect);
     }
-  }, [isAuthenticated, isLoading, router]);
+  }, [isAuthenticated, isLoading, router, redirect]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();

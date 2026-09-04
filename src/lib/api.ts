@@ -373,6 +373,7 @@ export type EsimAssignmentPayload = {
 export type EsimAssignmentStatus = {
   has_sim: boolean;
   status?: string;
+  poll_again?: boolean;
   retry_after_seconds?: number;
   inventory?: { available?: number };
   data?: EsimAssignmentPayload;

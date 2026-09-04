@@ -548,26 +548,37 @@ export default function CheckoutPage() {
     draftId?: string;
   }) => {
     const payEmail = (opts.emailOverride ?? email).trim();
+    const snapshot = {
+      order_id: opts.orderId,
+      draft_id: opts.draftId ?? orderDraftId,
+      items: [{ bundle: cart.bundle, quantity: 1 }],
+      trip: {
+        countryName: cart.countryName,
+        arrivalDate: cart.tripArrivalDate,
+        departureDate: cart.tripDepartureDate,
+        duration:
+          cart.tripArrivalDate && cart.tripDepartureDate
+            ? tripInclusiveDays(cart.tripArrivalDate, cart.tripDepartureDate)
+            : undefined,
+      },
+      simType: cart.simType,
+      total,
+      currency,
+      email: payEmail,
+      createdAt: new Date().toISOString(),
+    };
+    localStorage.setItem('pendingPayment', JSON.stringify(snapshot));
     localStorage.setItem(
-      'pendingPayment',
+      'lastPurchase',
       JSON.stringify({
-        order_id: opts.orderId,
-        draft_id: opts.draftId ?? orderDraftId,
-        items: [{ bundle: cart.bundle, quantity: 1 }],
-        trip: {
-          countryName: cart.countryName,
-          arrivalDate: cart.tripArrivalDate,
-          departureDate: cart.tripDepartureDate,
-          duration:
-            cart.tripArrivalDate && cart.tripDepartureDate
-              ? tripInclusiveDays(cart.tripArrivalDate, cart.tripDepartureDate)
-              : undefined,
-        },
-        simType: cart.simType,
+        items: snapshot.items,
+        trip: snapshot.trip,
         total,
         currency,
-        email: payEmail,
-        createdAt: new Date().toISOString(),
+        orderId: snapshot.order_id,
+        draftId: snapshot.draft_id,
+        simType: cart.simType,
+        date: snapshot.createdAt,
       })
     );
   };

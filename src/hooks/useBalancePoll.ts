@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { usePathname, useRouter } from 'next/navigation';
 import { EsimsApi } from '@/lib/api';
 import {
   clearBalancePoll,
@@ -19,6 +20,8 @@ type BalanceStatusResponse = {
 };
 
 export function useBalancePoll(options?: { onBalanceReady?: () => void }) {
+  const router = useRouter();
+  const pathname = usePathname();
   const onReadyRef = useRef(options?.onBalanceReady);
   onReadyRef.current = options?.onBalanceReady;
 
@@ -26,9 +29,31 @@ export function useBalancePoll(options?: { onBalanceReady?: () => void }) {
     initBalancePollFromUrl();
     return getBalancePollContext();
   });
+
   const [confirmedDataMb, setConfirmedDataMb] = useState<number | null>(null);
   const [pollComplete, setPollComplete] = useState(false);
   const [isPolling, setIsPolling] = useState(Boolean(context));
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const params = new URLSearchParams(window.location.search);
+    const fromReturnUrl =
+      params.get('await_balance') === '1' || params.has('purchased_mb');
+    if (fromReturnUrl) {
+      initBalancePollFromUrl();
+    }
+    const next = getBalancePollContext();
+    if (next) {
+      setContext(next);
+      setIsPolling(true);
+    }
+    if (!fromReturnUrl) return;
+    params.delete('await_balance');
+    params.delete('msisdn');
+    params.delete('purchased_mb');
+    const qs = params.toString();
+    router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false });
+  }, [router, pathname]);
 
   const pollEnabled = Boolean(context?.since) && !pollComplete;
 

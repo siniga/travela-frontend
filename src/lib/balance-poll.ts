@@ -8,9 +8,25 @@ export type BalancePollContext = {
   optimisticDataMb: number;
 };
 
-export function getOptimisticDataMb(): number | null {
+function readStored(key: string): string | null {
   if (typeof window === 'undefined') return null;
-  const raw = sessionStorage.getItem(OPTIMISTIC_DATA_MB_KEY);
+  return sessionStorage.getItem(key) ?? localStorage.getItem(key);
+}
+
+function writeStored(key: string, value: string) {
+  if (typeof window === 'undefined') return;
+  sessionStorage.setItem(key, value);
+  localStorage.setItem(key, value);
+}
+
+function removeStored(key: string) {
+  if (typeof window === 'undefined') return;
+  sessionStorage.removeItem(key);
+  localStorage.removeItem(key);
+}
+
+export function getOptimisticDataMb(): number | null {
+  const raw = readStored(OPTIMISTIC_DATA_MB_KEY);
   if (raw == null || raw === '') return null;
   const n = Number(raw);
   return Number.isFinite(n) && n >= 0 ? n : null;
@@ -31,51 +47,62 @@ export function startBalancePoll(opts: {
       ? Math.max(0, opts.currentDataMb)
       : 0);
 
-  sessionStorage.setItem(OPTIMISTIC_DATA_MB_KEY, String(baseline + purchased));
-  sessionStorage.setItem(AWAIT_SINCE_KEY, new Date().toISOString());
+  writeStored(OPTIMISTIC_DATA_MB_KEY, String(baseline + purchased));
+  writeStored(AWAIT_SINCE_KEY, new Date().toISOString());
 
   if (opts.msisdn) {
-    sessionStorage.setItem(AWAIT_MSISDN_KEY, opts.msisdn);
+    writeStored(AWAIT_MSISDN_KEY, opts.msisdn);
   } else {
-    sessionStorage.removeItem(AWAIT_MSISDN_KEY);
+    removeStored(AWAIT_MSISDN_KEY);
   }
 }
 
 export function getBalancePollContext(): BalancePollContext | null {
   if (typeof window === 'undefined') return null;
 
-  const since = sessionStorage.getItem(AWAIT_SINCE_KEY);
+  const since = readStored(AWAIT_SINCE_KEY);
   const optimistic = getOptimisticDataMb();
   if (!since || optimistic == null) return null;
 
-  const msisdn = sessionStorage.getItem(AWAIT_MSISDN_KEY);
-  return msisdn ? { since, msisdn, optimisticDataMb: optimistic } : { since, optimisticDataMb: optimistic };
+  const msisdn = readStored(AWAIT_MSISDN_KEY);
+  return msisdn
+    ? { since, msisdn, optimisticDataMb: optimistic }
+    : { since, optimisticDataMb: optimistic };
 }
 
 export function clearBalancePoll() {
   if (typeof window === 'undefined') return;
-  sessionStorage.removeItem(AWAIT_SINCE_KEY);
-  sessionStorage.removeItem(AWAIT_MSISDN_KEY);
-  sessionStorage.removeItem(OPTIMISTIC_DATA_MB_KEY);
+  removeStored(AWAIT_SINCE_KEY);
+  removeStored(AWAIT_MSISDN_KEY);
+  removeStored(OPTIMISTIC_DATA_MB_KEY);
 }
 
 export function initBalancePollFromUrl() {
   if (typeof window === 'undefined') return;
 
   const params = new URLSearchParams(window.location.search);
-  if (params.get('await_balance') !== '1') return;
+  const purchased = Number(params.get('purchased_mb') ?? '0');
+  const hasPurchaseHint =
+    params.get('await_balance') === '1' || (Number.isFinite(purchased) && purchased > 0);
+  if (!hasPurchaseHint) return;
 
-  if (!getBalancePollContext()) {
-    const purchased = Number(params.get('purchased_mb') ?? '0');
+  const existing = getBalancePollContext();
+  const purchasedMb = Number.isFinite(purchased) ? purchased : 0;
+
+  if (!existing) {
     startBalancePoll({
       msisdn: params.get('msisdn') || undefined,
-      purchasedDataMb: Number.isFinite(purchased) ? purchased : 0,
+      purchasedDataMb: purchasedMb,
     });
+    return;
   }
 
-  params.delete('await_balance');
-  params.delete('msisdn');
-  params.delete('purchased_mb');
-  const qs = params.toString();
-  window.history.replaceState({}, '', `${window.location.pathname}${qs ? `?${qs}` : ''}`);
+  if (purchasedMb > 0 && existing.optimisticDataMb < purchasedMb) {
+    writeStored(OPTIMISTIC_DATA_MB_KEY, String(purchasedMb));
+  }
+
+  const urlMsisdn = params.get('msisdn');
+  if (urlMsisdn) {
+    writeStored(AWAIT_MSISDN_KEY, urlMsisdn);
+  }
 }

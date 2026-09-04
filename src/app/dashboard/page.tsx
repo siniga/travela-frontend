@@ -11,7 +11,7 @@ import {
   type EsimAssignmentStatus,
 } from '@/lib/api';
 import { useAuth } from '@/lib/auth-context';
-import { getOptimisticDataMb } from '@/lib/balance-poll';
+import { getBalancePollContext, getOptimisticDataMb } from '@/lib/balance-poll';
 import { displayBundleName } from '@/lib/bundles';
 import { dataMbFromAssignment } from '@/lib/esim-balance';
 import { useBalancePoll } from '@/hooks/useBalancePoll';
@@ -393,6 +393,7 @@ function parseAssignmentStatus(body: unknown): EsimAssignmentStatus {
 
   const has_sim = source.has_sim === true;
   const status = typeof source.status === 'string' ? source.status : undefined;
+  const poll_again = source.poll_again === true;
   const retry_after_seconds =
     typeof source.retry_after_seconds === 'number'
       ? source.retry_after_seconds
@@ -418,12 +419,15 @@ function parseAssignmentStatus(body: unknown): EsimAssignmentStatus {
     if (esim || bundle) data = { esim, bundle };
   }
 
-  return { has_sim, status, retry_after_seconds, inventory, data };
+  return { has_sim, status, poll_again, retry_after_seconds, inventory, data };
 }
 
-function shouldPollAssignment(status: EsimAssignmentStatus): boolean {
+function shouldPollAssignment(status: EsimAssignmentStatus, justPaid: boolean): boolean {
   if (status.has_sim) return false;
-  return status.status === 'waiting_for_inventory';
+  if (status.status === 'waiting_for_agent') return false;
+  if (status.poll_again) return true;
+  if (status.status === 'waiting_for_inventory') return true;
+  return justPaid && status.status === 'payment_required';
 }
 
 function readPendingPaymentFromStorage(): PendingPaymentData | null {
@@ -435,6 +439,33 @@ function readPendingPaymentFromStorage(): PendingPaymentData | null {
   } catch {
     return null;
   }
+}
+
+function readLastPurchaseFromStorage(): PurchaseData | null {
+  if (typeof window === 'undefined') return null;
+  const raw = localStorage.getItem('lastPurchase');
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw) as PurchaseData;
+  } catch {
+    return null;
+  }
+}
+
+function purchaseFromPurchasedMb(mb: number): PurchaseData {
+  return {
+    items: [
+      {
+        bundle: {
+          name: fallbackBundleName(mb) ?? `${formatMb(mb)} eSIM`,
+          data_mb: mb,
+          validity_days: 30,
+        },
+        quantity: 1,
+      },
+    ],
+    simType: 'esim',
+  };
 }
 
 function parseOrdersFromBody(body: unknown): OrderRecord[] {
@@ -569,8 +600,10 @@ function formatMsisdn(msisdn?: string | null) {
 export default function DashboardPage() {
   const { isAuthenticated, isLoading, user } = useAuth();
   const router = useRouter();
-  const [purchase, setPurchase] = useState<PurchaseData | null>(null);
-  const [pendingPayment, setPendingPayment] = useState<PendingPaymentData | null>(null);
+  const [purchase, setPurchase] = useState<PurchaseData | null>(() => readLastPurchaseFromStorage());
+  const [pendingPayment, setPendingPayment] = useState<PendingPaymentData | null>(
+    () => readPendingPaymentFromStorage()
+  );
   const [orders, setOrders] = useState<OrderRecord[]>([]);
   const [ordersLoading, setOrdersLoading] = useState(true);
   const [userEsims, setUserEsims] = useState<UserEsimRecord[]>([]);
@@ -777,23 +810,33 @@ export default function DashboardPage() {
 
   useEffect(() => {
     if (!isLoading && !isAuthenticated) {
-      router.replace('/auth/login?redirect=/dashboard');
-      return;
+      const search = typeof window !== 'undefined' ? window.location.search : '';
+      const dest = `/dashboard${search}`;
+      router.replace(`/auth/login?redirect=${encodeURIComponent(dest)}`);
     }
   }, [isAuthenticated, isLoading, router]);
 
   useEffect(() => {
     if (!isAuthenticated) return;
-    const raw = localStorage.getItem('lastPurchase');
-    if (raw) {
-      try {
-        setPurchase(JSON.parse(raw));
-      } catch {
-        setPurchase(null);
-      }
+    const pending = readPendingPaymentFromStorage();
+    const storedPurchase = readLastPurchaseFromStorage();
+    setPendingPayment(pending);
+    if (storedPurchase) {
+      setPurchase(storedPurchase);
+    } else if (pending) {
+      setPurchase({
+        items: pending.items,
+        trip: pending.trip,
+        total: pending.total,
+        currency: pending.currency,
+        orderId: pending.order_id,
+        draftId: pending.draft_id,
+        simType: pending.simType,
+      });
+    } else if (optimisticDataMb != null && optimisticDataMb > 0) {
+      setPurchase((current) => current ?? purchaseFromPurchasedMb(optimisticDataMb));
     }
-    setPendingPayment(readPendingPaymentFromStorage());
-  }, [isAuthenticated]);
+  }, [isAuthenticated, optimisticDataMb]);
 
   useEffect(() => {
     if (!isAuthenticated) return;
@@ -814,7 +857,7 @@ export default function DashboardPage() {
   }, [isAuthenticated, loadEsims]);
 
   useEffect(() => {
-    if (!isAuthenticated || ordersLoading) return;
+    if (!isAuthenticated) return;
 
     const signal: WatcherSignal = { cancelled: false };
 
@@ -845,6 +888,7 @@ export default function DashboardPage() {
 
           const status = parseAssignmentStatus(statusRes.body);
           const pendingPay = readPendingPaymentFromStorage();
+          const justPaid = Boolean(pendingPay || getBalancePollContext());
           const isPhysicalPurchase =
             pendingPay?.simType === 'physical' ||
             hasPhysicalSimPurchase(ordersRef.current, pendingPay, purchaseRef.current);
@@ -858,17 +902,25 @@ export default function DashboardPage() {
           if (status.has_sim) {
             applyAssignedSim(status.data);
             setWaitingForSim(false);
-            if (pendingPay?.simType === 'physical') {
-              localStorage.removeItem('pendingPayment');
-              setPendingPayment(null);
+            localStorage.removeItem('pendingPayment');
+            setPendingPayment(null);
+            if (justPaid) {
+              const rechargeRes = await EsimsApi.register();
+              if (signal.cancelled) return;
+              if (rechargeRes.ok || rechargeRes.status === 201) {
+                const assign = parseAssignmentStatus(rechargeRes.body);
+                if (assign.has_sim) applyAssignedSim(assign.data);
+              }
             }
             await loadEsims();
+            await loadOrders();
             setAssignmentLoading(false);
             return;
           }
 
-          if (shouldPollAssignment(status)) {
+          if (shouldPollAssignment(status, justPaid)) {
             setWaitingForSim(true);
+            setAssignmentLoading(false);
           } else {
             setWaitingForSim(false);
             await loadEsims();
@@ -876,7 +928,7 @@ export default function DashboardPage() {
             return;
           }
 
-          if ((status.inventory?.available ?? 0) > 0) {
+          if (status.status !== 'waiting_for_agent') {
             const assignRes = await EsimsApi.register();
             if (signal.cancelled) return;
 
@@ -885,15 +937,27 @@ export default function DashboardPage() {
               if (assign.has_sim) {
                 applyAssignedSim(assign.data);
                 setWaitingForSim(false);
+                localStorage.removeItem('pendingPayment');
+                setPendingPayment(null);
                 await loadEsims();
+                await loadOrders();
                 setAssignmentLoading(false);
                 return;
               }
             }
           }
 
-          const delayMs = (status.retry_after_seconds ?? DEFAULT_RETRY_SECONDS) * 1000;
-          await sleep(delayMs, signal);
+          if (justPaid || status.status === 'payment_required') {
+            await loadOrders();
+          }
+
+          const delaySeconds =
+            justPaid ||
+            status.status === 'payment_required' ||
+            status.status === 'waiting_for_inventory'
+              ? Math.min(status.retry_after_seconds ?? 5, 5)
+              : (status.retry_after_seconds ?? DEFAULT_RETRY_SECONDS);
+          await sleep(delaySeconds * 1000, signal);
         }
       } catch (e: unknown) {
         if (signal.cancelled) return;
@@ -910,7 +974,7 @@ export default function DashboardPage() {
       signal.cancelled = true;
       if (signal.timeoutId) window.clearTimeout(signal.timeoutId);
     };
-  }, [isAuthenticated, applyAssignedSim, loadEsims, ordersLoading]);
+  }, [isAuthenticated, applyAssignedSim, loadEsims, loadOrders]);
 
   if (isLoading || !isAuthenticated) {
     return (
@@ -922,6 +986,14 @@ export default function DashboardPage() {
 
   const primaryUserEsim = userEsims[0] ?? null;
   const primaryBundle = purchase?.items?.[0]?.bundle;
+  const pendingBundle = pendingPayment?.items?.[0]?.bundle;
+  const latestPaidOrder = orders
+    .filter(isPaidOrder)
+    .sort(
+      (a, b) =>
+        new Date(b.paid_at ?? b.created_at).getTime() -
+        new Date(a.paid_at ?? a.created_at).getTime()
+    )[0];
   const apiBundle = primaryUserEsim?.bundle ?? latestOrderBundle ?? null;
 
   const assignedMsisdn =
@@ -954,6 +1026,7 @@ export default function DashboardPage() {
       apiBundle?.name ??
       assignedSim?.bundle?.type_name ??
       assignedSim?.bundle?.name ??
+      pendingBundle?.name ??
       primaryBundle?.name ??
       null
   ) || null;
@@ -961,32 +1034,51 @@ export default function DashboardPage() {
     apiBundle?.duration ??
     (apiBundle?.validity_days ? `${apiBundle.validity_days} days` : null) ??
     assignedSim?.bundle?.duration ??
+    (pendingBundle?.validity_days ? `${pendingBundle.validity_days} days` : null) ??
     (primaryBundle?.validity_days ? `${primaryBundle.validity_days} days` : null);
   const planValidityLabel = assignedBundleDuration ?? '30 days';
 
   const carrierDataMb = dataMbFromAssignment(primaryUserEsim);
+  const purchasedPlanMb =
+    coerceNumber(pendingBundle?.data_mb) ??
+    coerceNumber(primaryBundle?.data_mb) ??
+    coerceNumber(latestPaidOrder?.order_items?.[0]?.data_amount) ??
+    coerceNumber(apiBundle?.data_mb) ??
+    null;
   const displayDataMb =
-    confirmedDataMb ?? (balancePolling ? (optimisticDataMb ?? carrierDataMb) : carrierDataMb);
+    confirmedDataMb ??
+    carrierDataMb ??
+    optimisticDataMb ??
+    purchasedPlanMb;
 
-  const balanceStatusSub = balancePolling
-    ? 'This can take a minute — please wait'
-    : confirmedDataMb != null || carrierDataMb != null
-      ? 'Live data remaining'
-      : 'Waiting for data balance';
+  const balanceStatusSub = confirmedDataMb != null || carrierDataMb != null
+    ? 'Live data remaining'
+    : balancePolling || waitingForSim
+      ? 'Confirming with the network'
+      : purchasedPlanMb != null
+        ? 'Purchased data'
+        : 'Waiting for data balance';
 
-  const simType = primaryUserEsim?.esim?.sim_type ?? assignedSim?.esim?.sim_type ?? 'esim';
+  const simType = primaryUserEsim?.esim?.sim_type ?? assignedSim?.esim?.sim_type ?? purchase?.simType ?? pendingPayment?.simType ?? 'esim';
   const isEsimType = simType.toLowerCase() !== 'physical';
   const simStatus = primaryUserEsim?.esim?.status ?? assignedSim?.esim?.status ?? null;
   const simIsActive = isEsimType
     ? Boolean(primaryUserEsim?.device_activated_at)
     : isSimActive(simStatus);
-  const simStatusDisplay = isEsimType
-    ? esimDeviceStatusLabel(primaryUserEsim, simStatus)
-    : simStatusLabel(simStatus);
-  const simTypeTitle = simTypeLabel(simType);
-
   const hasActiveEsim =
     Boolean(assignedMsisdn) || userEsims.length > 0;
+  const hasPurchasedPlan =
+    hasActiveEsim ||
+    Boolean(optimisticDataMb != null && optimisticDataMb > 0) ||
+    Boolean(pendingPayment && pendingPayment.simType !== 'physical') ||
+    Boolean(purchase && purchase.simType !== 'physical') ||
+    Boolean(latestPaidOrder && latestPaidOrder.metadata?.simType !== 'physical');
+  const simStatusDisplay = !hasActiveEsim && hasPurchasedPlan
+    ? 'Setting up'
+    : isEsimType
+      ? esimDeviceStatusLabel(primaryUserEsim, simStatus)
+      : simStatusLabel(simStatus);
+  const simTypeTitle = simTypeLabel(simType);
 
   const physicalPickupDetails = resolvePhysicalPickupDetails(
     orders,
@@ -1001,30 +1093,19 @@ export default function DashboardPage() {
       ? userEsims.length
       : (purchase?.items?.reduce((s, c) => s + c.quantity, 0) ?? 0);
 
-  const headlineData =
-    displayDataMb != null || !balancePolling
-      ? displayDataBalance(displayDataMb)
-      : 'Loading…';
-  const balanceAreaValue =
-    displayDataMb != null || !balancePolling
-      ? displayDataBalance(displayDataMb)
-      : 'Loading…';
+  const headlineData = displayDataBalance(displayDataMb);
+  const balanceAreaValue = displayDataBalance(displayDataMb);
 
   const esimTitle =
     assignedBundleName ??
+    displayBundleName(pendingBundle?.name ?? primaryBundle?.name ?? latestPaidOrder?.order_items?.[0]?.bundle_name ?? null) ??
     (assignedMsisdn ? formatMsisdn(assignedMsisdn) : null) ??
     'eSIM';
 
-  const latestPaidOrder = orders
-    .filter(isPaidOrder)
-    .sort(
-      (a, b) =>
-        new Date(b.paid_at ?? b.created_at).getTime() -
-        new Date(a.paid_at ?? a.created_at).getTime()
-    )[0];
   const planValidityDays =
     coerceNumber(latestPaidOrder?.order_items?.[0]?.validity_days) ??
     coerceNumber(apiBundle?.validity_days) ??
+    coerceNumber(pendingBundle?.validity_days) ??
     coerceNumber(primaryBundle?.validity_days) ??
     30;
   const scheduledActivationIso =
@@ -1103,7 +1184,7 @@ export default function DashboardPage() {
         <div className="bg-emerald-50 border-b border-emerald-100 px-4 py-3">
           <p className="max-w-5xl mx-auto text-sm text-emerald-800 flex items-center gap-2">
             <Loader2 size={16} className="shrink-0 animate-spin" />
-            Balance is loading. This can take a minute — please wait while we confirm your data.
+            Balance is confirming with the network. Your purchased plan is shown below.
           </p>
         </div>
       ) : null}
@@ -1206,10 +1287,10 @@ export default function DashboardPage() {
             <Loader2 size={20} className="animate-spin text-sky-600 flex-shrink-0 mt-0.5" />
             <div>
               <p className="text-sm font-bold text-sky-900">
-                We&apos;re assigning your number. This may take a few minutes.
+                Payment received. We&apos;re setting up your eSIM.
               </p>
               <p className="text-xs text-sky-700 mt-1">
-                We&apos;ll update this page automatically when your SIM is ready.
+                Your plan is ready below. Number and live balance will appear here shortly.
               </p>
             </div>
           </div>
@@ -1344,14 +1425,14 @@ export default function DashboardPage() {
           </div>
         )}
 
-        {assignmentLoading && !hasActiveEsim && !waitingForSim && !isPhysicalSimAwaitingPickup ? (
+        {assignmentLoading && !hasActiveEsim && !waitingForSim && !hasPurchasedPlan && !isPhysicalSimAwaitingPickup ? (
           <div className="rounded-2xl p-12 flex items-center justify-center bg-white border border-slate-100">
             <Loader2 size={28} className="animate-spin text-slate-400" />
           </div>
-        ) : hasActiveEsim ? (
+        ) : hasActiveEsim || hasPurchasedPlan ? (
           <>
             {/* Activation instructions — shown first so users know what the buttons below do */}
-            {isEsimType && !primaryUserEsim?.device_activated_at && (
+            {isEsimType && hasActiveEsim && !primaryUserEsim?.device_activated_at && (
               <div className="bg-white rounded-2xl border border-dashed border-slate-300 p-6">
                 <div className="flex items-center gap-2 mb-4">
                   <Info size={18} style={{ color: '#17cf54' }} />
@@ -1618,14 +1699,7 @@ export default function DashboardPage() {
                 {
                   icon: <Globe size={16} style={{ color: '#17cf54' }} />,
                   label: 'Balance',
-                  value: balancePolling ? (
-                    <span className="inline-flex items-center gap-2">
-                      <Loader2 size={18} className="animate-spin shrink-0" style={{ color: '#17cf54' }} />
-                      Loading…
-                    </span>
-                  ) : (
-                    balanceAreaValue
-                  ),
+                  value: balanceAreaValue,
                   sub: balanceStatusSub,
                 },
                 {
