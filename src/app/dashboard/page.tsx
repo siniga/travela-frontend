@@ -647,7 +647,7 @@ export default function DashboardPage() {
   const loadEsimsRef = useRef(loadEsims);
   loadEsimsRef.current = loadEsims;
 
-  const { isPolling: balancePolling, confirmedDataMb } = useBalancePoll({
+  const { isPolling: balancePolling, confirmedDataMb, optimisticDataMb } = useBalancePoll({
     onBalanceReady: () => {
       void loadEsimsRef.current();
     },
@@ -965,9 +965,8 @@ export default function DashboardPage() {
   const planValidityLabel = assignedBundleDuration ?? '30 days';
 
   const carrierDataMb = dataMbFromAssignment(primaryUserEsim);
-  const displayDataMb = balancePolling
-    ? null
-    : (confirmedDataMb ?? carrierDataMb);
+  const displayDataMb =
+    confirmedDataMb ?? (balancePolling ? (optimisticDataMb ?? carrierDataMb) : carrierDataMb);
 
   const balanceStatusSub = balancePolling
     ? 'This can take a minute — please wait'
@@ -1002,8 +1001,14 @@ export default function DashboardPage() {
       ? userEsims.length
       : (purchase?.items?.reduce((s, c) => s + c.quantity, 0) ?? 0);
 
-  const headlineData = balancePolling ? 'Loading…' : displayDataBalance(displayDataMb);
-  const balanceAreaValue = balancePolling ? 'Loading…' : displayDataBalance(displayDataMb);
+  const headlineData =
+    displayDataMb != null || !balancePolling
+      ? displayDataBalance(displayDataMb)
+      : 'Loading…';
+  const balanceAreaValue =
+    displayDataMb != null || !balancePolling
+      ? displayDataBalance(displayDataMb)
+      : 'Loading…';
 
   const esimTitle =
     assignedBundleName ??
@@ -1051,13 +1056,14 @@ export default function DashboardPage() {
     coerceNumber(latestPaidOrder?.order_items?.[0]?.data_amount) ||
     coerceNumber(primaryBundle?.data_mb);
   const remainingMb = displayDataMb;
-  const dataRemainingLabel = balancePolling
-    ? 'Loading…'
-    : remainingMb != null
+  const dataRemainingLabel =
+    remainingMb != null
       ? displayDataBalance(remainingMb)
-      : !simIsActive
-        ? 'Not started'
-        : '—';
+      : balancePolling
+        ? 'Loading…'
+        : !simIsActive
+          ? 'Not started'
+          : '—';
   const dataProgressPct =
     remainingMb == null || !bundleTotalMb
       ? simIsActive

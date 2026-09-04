@@ -16,7 +16,7 @@ export function getOptimisticDataMb(): number | null {
   return Number.isFinite(n) && n >= 0 ? n : null;
 }
 
-/** Start or extend optimistic balance polling after a top-up purchase. */
+/** Start or extend optimistic balance polling after checkout or a top-up. */
 export function startBalancePoll(opts: {
   msisdn?: string;
   purchasedDataMb: number;

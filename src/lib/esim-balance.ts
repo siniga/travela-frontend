@@ -24,7 +24,11 @@ export function dataMbFromBalances(balances: unknown): number | null {
 /** Prefer live Vodacom DATA on the assignment. Do not fall back to bundle size. */
 export function dataMbFromAssignment(record: BalanceRecord | null | undefined): number | null {
   if (!record) return null;
-  return dataMbFromBalances(record.balances);
+  const nested =
+    record && typeof record === 'object' && 'esim' in record
+      ? (record as BalanceRecord & { esim?: BalanceRecord | null }).esim
+      : undefined;
+  return dataMbFromBalances(record.balances) ?? dataMbFromBalances(nested?.balances);
 }
 
 export function dataMbFromBalanceStatusBody(body: unknown): number | null {

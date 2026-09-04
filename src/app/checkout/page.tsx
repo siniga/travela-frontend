@@ -708,12 +708,12 @@ export default function CheckoutPage() {
 
       savePendingPayment({ orderId, draftId });
 
-      if (isTopUpFlow && cart) {
+      if (cart && (isTopUpFlow || cart.simType === 'esim')) {
         const purchasedDataMb = Number(cart.bundle.data_mb) || 0;
         startBalancePoll({
           msisdn: cart.msisdn,
           purchasedDataMb,
-          currentDataMb: cart.current_data_mb,
+          currentDataMb: isTopUpFlow ? cart.current_data_mb : 0,
         });
       }
 

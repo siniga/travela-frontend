@@ -27,9 +27,10 @@ export function useBalancePoll(options?: { onBalanceReady?: () => void }) {
     return getBalancePollContext();
   });
   const [confirmedDataMb, setConfirmedDataMb] = useState<number | null>(null);
+  const [pollComplete, setPollComplete] = useState(false);
   const [isPolling, setIsPolling] = useState(Boolean(context));
 
-  const pollEnabled = Boolean(context?.since) && confirmedDataMb == null;
+  const pollEnabled = Boolean(context?.since) && !pollComplete;
 
   const pollOnce = useCallback(async () => {
     if (!context?.since) return true;
@@ -37,6 +38,7 @@ export function useBalancePoll(options?: { onBalanceReady?: () => void }) {
     const sinceMs = Date.parse(context.since);
     if (Number.isFinite(sinceMs) && Date.now() - sinceMs > MAX_POLL_MS) {
       setIsPolling(false);
+      setPollComplete(true);
       return true;
     }
 
@@ -51,11 +53,8 @@ export function useBalancePoll(options?: { onBalanceReady?: () => void }) {
       const body = res.body as BalanceStatusResponse;
       if (!body.balance_ready) return false;
 
-      const dataMb = dataMbFromBalanceStatusBody(body);
-      if (dataMb == null) return false;
-
-      setConfirmedDataMb(dataMb);
-
+      setConfirmedDataMb(dataMbFromBalanceStatusBody(body));
+      setPollComplete(true);
       clearBalancePoll();
       setContext(null);
       setIsPolling(false);
