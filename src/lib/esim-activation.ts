@@ -5,6 +5,9 @@
 const PENDING_INSTALL_KEY = 'travela:esim-install-pending';
 const PENDING_INSTALL_MAX_AGE_MS = 48 * 60 * 60 * 1000;
 
+/** If the page is still visible after this, treat install handoff as failed. */
+export const ESIM_HANDOFF_TIMEOUT_MS = 2500;
+
 export type PendingEsimInstall = {
   userEsimId: number;
   startedAt: string;
@@ -33,10 +36,16 @@ export function isAppleDevice(): boolean {
   );
 }
 
+export function isAndroidDevice(): boolean {
+  if (typeof navigator === 'undefined') return false;
+  return /Android/i.test(navigator.userAgent || '');
+}
+
 /**
  * Build a navigable install URL for the current device.
- * - Apple: universal link (Safari rejects raw LPA: URIs)
- * - Android / other: raw LPA scheme (or https if already a link)
+ * - Apple: esimsetup.apple.com universal link
+ * - Android: esimsetup.android.com universal link (Play services)
+ * - Fallback: raw LPA scheme
  */
 export function buildEsimActivationHref(qrCodeData: string): string {
   const value = qrCodeData.trim();
@@ -47,12 +56,19 @@ export function buildEsimActivationHref(qrCodeData: string): string {
   }
 
   const lpa = normalizeLpaPayload(value);
-  if (!lpa) return value;
+  if (!lpa || /^https?:\/\//i.test(lpa)) return lpa || value;
+
+  const carddata = encodeURIComponent(lpa);
 
   if (isAppleDevice()) {
-    return `https://esimsetup.apple.com/esim_qrcode_provisioning?carddata=${encodeURIComponent(lpa)}`;
+    return `https://esimsetup.apple.com/esim_qrcode_provisioning?carddata=${carddata}`;
   }
 
+  if (isAndroidDevice()) {
+    return `https://esimsetup.android.com/esim_qrcode_provisioning?carddata=${carddata}`;
+  }
+
+  // Desktop / unknown: raw LPA (QR panel is the reliable path)
   return lpa;
 }
 

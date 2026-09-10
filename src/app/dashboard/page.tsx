@@ -1619,13 +1619,14 @@ export default function DashboardPage() {
                         )
                       );
                     }}
+                    onShowQr={() => setShowQrCode(true)}
                   />
 
                   {!primaryUserEsim.device_activated_at && hasActivationData && (
                     <button
                       type="button"
                       onClick={() => setShowQrCode((v) => !v)}
-                      className="hidden sm:flex w-full items-center justify-center gap-2 py-3.5 rounded-xl text-sm font-bold border border-white/25 text-white hover:bg-white/10 transition-colors"
+                      className="flex w-full items-center justify-center gap-2 py-3.5 rounded-xl text-sm font-bold border border-white/25 text-white hover:bg-white/10 transition-colors"
                     >
                       {showQrCode ? 'Hide QR Code' : 'Open QR Code'}
                     </button>
@@ -1638,7 +1639,7 @@ export default function DashboardPage() {
                 !primaryUserEsim.device_activated_at &&
                 hasActivationData &&
                 showQrCode && (
-                  <div className="hidden sm:block">
+                  <div>
                     <QrCodePanel
                       userEsimId={primaryUserEsim.id}
                       qrCodeData={assignedQrCodeData}

@@ -4,11 +4,12 @@ import { EsimsApi, parseEsimActivation } from '@/lib/api';
 import {
   buildEsimActivationHref,
   clearPendingEsimInstall,
+  ESIM_HANDOFF_TIMEOUT_MS,
   hasPendingEsimInstall,
   writePendingEsimInstall,
 } from '@/lib/esim-activation';
 import { CheckCircle, Loader2, RefreshCw, Smartphone, X } from 'lucide-react';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 type ActivateEsimButtonProps = {
   userEsimId: number;
@@ -22,6 +23,8 @@ type ActivateEsimButtonProps = {
   variant?: 'dark' | 'light';
   /** Called after the server records device activation */
   onActivated?: (deviceActivatedAt: string) => void;
+  /** Open QR panel when direct install handoff fails or user needs a fallback */
+  onShowQr?: () => void;
 };
 
 function formatMsisdn(msisdn?: string | null) {
@@ -38,6 +41,7 @@ export default function ActivateEsimButton({
   msisdn = null,
   variant = 'dark',
   onActivated,
+  onShowQr,
 }: ActivateEsimButtonProps) {
   const trimmedInitial =
     typeof initialQrCodeData === 'string' ? initialQrCodeData.trim() : '';
@@ -45,6 +49,7 @@ export default function ActivateEsimButton({
   const [activating, setActivating] = useState(false);
   const [confirming, setConfirming] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
+  const [handoffHint, setHandoffHint] = useState('');
   const [qrCodeData, setQrCodeData] = useState<string | null>(
     trimmedInitial || null
   );
@@ -53,14 +58,27 @@ export default function ActivateEsimButton({
   );
   const [error, setError] = useState('');
   const [unavailable, setUnavailable] = useState(false);
+  const handoffTimeoutRef = useRef<number | null>(null);
+
+  const clearHandoffTimeout = useCallback(() => {
+    if (handoffTimeoutRef.current != null) {
+      window.clearTimeout(handoffTimeoutRef.current);
+      handoffTimeoutRef.current = null;
+    }
+  }, []);
+
+  useEffect(() => () => clearHandoffTimeout(), [clearHandoffTimeout]);
 
   useEffect(() => {
     setDeviceActivatedAt(initialDeviceActivatedAt ?? null);
     if (initialDeviceActivatedAt) {
       clearPendingEsimInstall(userEsimId);
       setConfirmOpen(false);
+      setActivating(false);
+      setHandoffHint('');
+      clearHandoffTimeout();
     }
-  }, [initialDeviceActivatedAt, userEsimId]);
+  }, [initialDeviceActivatedAt, userEsimId, clearHandoffTimeout]);
 
   const openConfirmIfPending = useCallback(() => {
     if (typeof document !== 'undefined' && document.visibilityState === 'hidden') {
@@ -70,13 +88,20 @@ export default function ActivateEsimButton({
       clearPendingEsimInstall(userEsimId);
       setConfirmOpen(false);
       setActivating(false);
+      clearHandoffTimeout();
       return;
     }
     if (hasPendingEsimInstall(userEsimId)) {
+      clearHandoffTimeout();
       setActivating(false);
       setConfirmOpen(true);
     }
-  }, [deviceActivatedAt, initialDeviceActivatedAt, userEsimId]);
+  }, [
+    clearHandoffTimeout,
+    deviceActivatedAt,
+    initialDeviceActivatedAt,
+    userEsimId,
+  ]);
 
   useEffect(() => {
     openConfirmIfPending();
@@ -144,24 +169,48 @@ export default function ActivateEsimButton({
     void fetchActivation();
   }, [fetchActivation, trimmedInitial]);
 
+  const handleHandoffStillHere = useCallback(() => {
+    handoffTimeoutRef.current = null;
+    if (typeof document !== 'undefined' && document.visibilityState === 'hidden') {
+      return;
+    }
+    setActivating(false);
+    setConfirmOpen(true);
+    setHandoffHint(
+      'Install didn’t open on this phone. Use Open QR Code below, or Retry.'
+    );
+    onShowQr?.();
+  }, [onShowQr]);
+
   const launchInstall = useCallback(
     (payload: string) => {
+      clearHandoffTimeout();
       writePendingEsimInstall(userEsimId);
-      window.location.href = buildEsimActivationHref(payload);
+      setHandoffHint('');
+      setActivating(true);
+
+      const href = buildEsimActivationHref(payload);
+      handoffTimeoutRef.current = window.setTimeout(() => {
+        handleHandoffStillHere();
+      }, ESIM_HANDOFF_TIMEOUT_MS);
+
+      window.location.href = href;
     },
-    [userEsimId]
+    [clearHandoffTimeout, handleHandoffStillHere, userEsimId]
   );
 
   const handleActivate = () => {
     if (!qrCodeData || activating || confirming) return;
     setError('');
-    setActivating(true);
     try {
       launchInstall(qrCodeData);
     } catch (err: unknown) {
+      clearHandoffTimeout();
       clearPendingEsimInstall(userEsimId);
       setError(err instanceof Error ? err.message : 'Failed to start activation.');
       setActivating(false);
+      setHandoffHint('Use Open QR Code below to install manually.');
+      onShowQr?.();
     }
   };
 
@@ -195,6 +244,7 @@ export default function ActivateEsimButton({
 
       clearPendingEsimInstall(userEsimId);
       setConfirmOpen(false);
+      setHandoffHint('');
       setDeviceActivatedAt(activatedAt);
       onActivated?.(activatedAt);
     } catch (err: unknown) {
@@ -208,11 +258,14 @@ export default function ActivateEsimButton({
     clearPendingEsimInstall(userEsimId);
     setConfirmOpen(false);
     setError('');
+    setHandoffHint('Use Open QR Code below when you are ready to install.');
+    onShowQr?.();
   };
 
   const handleConfirmRetry = () => {
     if (!qrCodeData || confirming) return;
     setError('');
+    setConfirmOpen(false);
     launchInstall(qrCodeData);
   };
 
@@ -244,7 +297,8 @@ export default function ActivateEsimButton({
             </h2>
             <p className="text-xs text-white/65 mt-1 leading-relaxed">
               Confirm only if your phone finished adding the eSIM profile. If setup
-              failed or you cancelled, choose No or Retry.
+              failed or you cancelled, choose No or Retry — or scan the QR code on
+              this page.
             </p>
           </div>
           <button
@@ -259,6 +313,11 @@ export default function ActivateEsimButton({
         </div>
 
         <div className="p-5 space-y-3">
+          {handoffHint && (
+            <p className="text-sm text-amber-900 bg-amber-50 border border-amber-100 rounded-xl px-3 py-2">
+              {handoffHint}
+            </p>
+          )}
           {error && (
             <p className="text-sm text-red-600 bg-red-50 border border-red-100 rounded-xl px-3 py-2">
               {error}
@@ -301,7 +360,7 @@ export default function ActivateEsimButton({
             disabled={confirming}
             className="w-full flex items-center justify-center gap-2 py-3 rounded-xl text-sm font-bold text-slate-500 hover:text-slate-800 hover:bg-slate-50 transition-colors disabled:opacity-60"
           >
-            No, not yet
+            No — show QR code
           </button>
         </div>
       </div>
@@ -428,27 +487,38 @@ export default function ActivateEsimButton({
   return (
     <>
       {confirmModal}
-      <button
-        type="button"
-        onClick={handleActivate}
-        disabled={activating || confirming}
-        className={`w-full flex items-center justify-center gap-2 py-3.5 rounded-xl text-sm font-bold transition-opacity hover:opacity-90 disabled:opacity-60 ${
-          isDark ? '' : 'shadow-sm'
-        }`}
-        style={{ backgroundColor: '#17cf54', color: '#112116' }}
-      >
-        {activating ? (
-          <>
-            <Loader2 size={16} className="animate-spin" />
-            Starting activation…
-          </>
-        ) : (
-          <>
-            <Smartphone size={16} />
-            Activate eSIM
-          </>
+      <div className="space-y-2">
+        <button
+          type="button"
+          onClick={handleActivate}
+          disabled={activating || confirming}
+          className={`w-full flex items-center justify-center gap-2 py-3.5 rounded-xl text-sm font-bold transition-opacity hover:opacity-90 disabled:opacity-60 ${
+            isDark ? '' : 'shadow-sm'
+          }`}
+          style={{ backgroundColor: '#17cf54', color: '#112116' }}
+        >
+          {activating ? (
+            <>
+              <Loader2 size={16} className="animate-spin" />
+              Starting activation…
+            </>
+          ) : (
+            <>
+              <Smartphone size={16} />
+              Activate eSIM
+            </>
+          )}
+        </button>
+        {handoffHint && !confirmOpen && (
+          <p
+            className={`text-xs text-center leading-relaxed ${
+              isDark ? 'text-amber-200/90' : 'text-amber-800'
+            }`}
+          >
+            {handoffHint}
+          </p>
         )}
-      </button>
+      </div>
     </>
   );
 }
