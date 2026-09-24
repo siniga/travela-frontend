@@ -1,5 +1,6 @@
 import type { Metadata } from 'next';
 import { Plus_Jakarta_Sans } from 'next/font/google';
+import Script from 'next/script';
 import './globals.css';
 import { AuthProvider } from '@/lib/auth-context';
 import Navbar from '@/components/layout/Navbar';
@@ -31,6 +32,9 @@ export default function RootLayout({
   return (
     <html lang="en" className={plusJakarta.variable} data-scroll-behavior="smooth">
       <body>
+        <Script id="bundles-scroll-top" strategy="beforeInteractive">
+          {`try{if(location.pathname==="/bundles"){history.scrollRestoration="manual";var pin=function(){if(window.__bundlesUserScrolled)return;var el=document.documentElement;var prev=el.style.scrollBehavior;el.style.scrollBehavior="auto";window.scrollTo(0,0);el.style.scrollBehavior=prev;};var mark=function(){window.__bundlesUserScrolled=1;};pin();document.addEventListener("DOMContentLoaded",pin);window.addEventListener("load",pin);addEventListener("pointerdown",mark);addEventListener("wheel",mark,{passive:true});addEventListener("touchmove",mark,{passive:true});addEventListener("keydown",mark);}else{history.scrollRestoration="auto";}}catch(e){}`}
+        </Script>
         <AuthProvider>
           <div className="flex flex-col min-h-screen">
             <Navbar />

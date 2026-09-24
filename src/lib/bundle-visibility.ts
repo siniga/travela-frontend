@@ -106,11 +106,16 @@ export function isAdminOnlyUiBundle(bundle: UiBundleLike): boolean {
   return false;
 }
 
+/** True when the storefront is running in local/dev (mirrors API APP_ENV=local). */
+export function isLocalEnvironment(): boolean {
+  return process.env.NODE_ENV === 'development';
+}
+
 export function filterBundlesForRole<T extends ApiBundleLike>(
   bundles: T[],
-  role?: string | null,
+  _role?: string | null,
 ): T[] {
-  if (role === 'admin') {
+  if (isLocalEnvironment()) {
     return bundles;
   }
   return bundles.filter((bundle) => !isAdminOnlyApiBundle(bundle));
@@ -118,9 +123,9 @@ export function filterBundlesForRole<T extends ApiBundleLike>(
 
 export function filterUiBundlesForRole<T extends UiBundleLike>(
   bundles: T[],
-  role?: string | null,
+  _role?: string | null,
 ): T[] {
-  if (role === 'admin') {
+  if (isLocalEnvironment()) {
     return bundles;
   }
   return bundles.filter((bundle) => !isAdminOnlyUiBundle(bundle));

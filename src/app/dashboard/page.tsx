@@ -1,6 +1,7 @@
 'use client';
 
 import ActivateEsimButton from '@/components/esim/ActivateEsimButton';
+import AssignSimPrompt from '@/components/esim/AssignSimPrompt';
 import QrCodePanel from '@/components/esim/QrCodePanel';
 import {
   apiErrorMessage,
@@ -89,6 +90,7 @@ interface OrderRecord {
     countryName?: string;
     simType?: string;
     country?: string;
+    checkoutMode?: string;
   } | null;
   trip?: {
     destination_country?: string;
@@ -147,6 +149,7 @@ interface BundleDetail {
 interface EsimsListResponse {
   esims: UserEsimRecord[];
   latestOrderBundle: BundleDetail | null;
+  assignmentPrompt: { status?: string; activation_date?: string | null; order_id?: number | null } | null;
 }
 
 interface OrderItemDetail {
@@ -356,10 +359,10 @@ function daysLeftLabel(days: number | null): string | null {
 
 function parseEsimsFromBody(body: unknown): EsimsListResponse {
   if (!body || typeof body !== 'object') {
-    return { esims: [], latestOrderBundle: null };
+    return { esims: [], latestOrderBundle: null, assignmentPrompt: null };
   }
 
-  const b = body as { data?: unknown; latest_order?: unknown };
+  const b = body as { data?: unknown; latest_order?: unknown; assignment_prompt?: unknown };
   const esims: UserEsimRecord[] = Array.isArray(b.data)
     ? b.data
         .filter((item): item is Record<string, unknown> => !!item && typeof item === 'object')
@@ -375,7 +378,17 @@ function parseEsimsFromBody(body: unknown): EsimsListResponse {
     latestOrderBundle = normalizeBundle(latestOrder.bundle);
   }
 
-  return { esims, latestOrderBundle };
+  let assignmentPrompt: EsimsListResponse['assignmentPrompt'] = null;
+  if (b.assignment_prompt && typeof b.assignment_prompt === 'object') {
+    const prompt = b.assignment_prompt as Record<string, unknown>;
+    assignmentPrompt = {
+      status: typeof prompt.status === 'string' ? prompt.status : undefined,
+      activation_date: typeof prompt.activation_date === 'string' ? prompt.activation_date : null,
+      order_id: typeof prompt.order_id === 'number' ? prompt.order_id : null,
+    };
+  }
+
+  return { esims, latestOrderBundle, assignmentPrompt };
 }
 
 function parseAssignmentStatus(body: unknown): EsimAssignmentStatus {
@@ -398,6 +411,9 @@ function parseAssignmentStatus(body: unknown): EsimAssignmentStatus {
     typeof source.retry_after_seconds === 'number'
       ? source.retry_after_seconds
       : undefined;
+  const activation_date =
+    typeof source.activation_date === 'string' ? source.activation_date : null;
+  const order_id = typeof source.order_id === 'number' ? source.order_id : null;
 
   let inventory: EsimAssignmentStatus['inventory'];
   if (source.inventory && typeof source.inventory === 'object') {
@@ -419,7 +435,7 @@ function parseAssignmentStatus(body: unknown): EsimAssignmentStatus {
     if (esim || bundle) data = { esim, bundle };
   }
 
-  return { has_sim, status, poll_again, retry_after_seconds, inventory, data };
+  return { has_sim, status, poll_again, retry_after_seconds, activation_date, order_id, inventory, data };
 }
 
 function shouldPollAssignment(status: EsimAssignmentStatus, justPaid: boolean): boolean {
@@ -613,6 +629,15 @@ export default function DashboardPage() {
   const [waitingForSim, setWaitingForSim] = useState(false);
   const [esimsError, setEsimsError] = useState('');
   const [showQrCode, setShowQrCode] = useState(false);
+  const [assignPrompt, setAssignPrompt] = useState<'assign' | 'activate' | null>(null);
+  const [promptActivationDate, setPromptActivationDate] = useState<string | null>(null);
+  const [promptOrderId, setPromptOrderId] = useState<number | null>(null);
+  const [promptUserEsimId, setPromptUserEsimId] = useState<number | null>(null);
+  const [promptQr, setPromptQr] = useState<string | null>(null);
+  const [promptMsisdn, setPromptMsisdn] = useState<string | null>(null);
+  const [assigningSim, setAssigningSim] = useState(false);
+  const [promptError, setPromptError] = useState('');
+  const [extendDate, setExtendDate] = useState('');
   const [topUpModalOpen, setTopUpModalOpen] = useState(false);
   const [topUpModalShown, setTopUpModalShown] = useState(false);
   const [topUpModalClosing, setTopUpModalClosing] = useState(false);
@@ -668,6 +693,13 @@ export default function DashboardPage() {
       const parsed = parseEsimsFromBody(res.body);
       setUserEsims(parsed.esims);
       setLatestOrderBundle(parsed.latestOrderBundle);
+      if (parsed.assignmentPrompt?.status === 'awaiting_confirmation' && parsed.esims.length === 0) {
+        setPromptActivationDate(parsed.assignmentPrompt.activation_date ?? null);
+        setPromptOrderId(parsed.assignmentPrompt.order_id ?? null);
+        setAssignPrompt((current) => (current === 'activate' ? 'activate' : 'assign'));
+      } else if (parsed.assignmentPrompt?.status === 'scheduled' && parsed.esims.length === 0) {
+        setAssignPrompt((current) => (current === 'activate' ? 'activate' : null));
+      }
     } catch (e: unknown) {
       const fallback =
         e instanceof Error ? e.message : typeof e === 'string' ? e : String(e);
@@ -692,6 +724,60 @@ export default function DashboardPage() {
     },
     []
   );
+
+  const handleAssignNow = async () => {
+    setAssigningSim(true);
+    setPromptError('');
+    try {
+      const res = await EsimsApi.register();
+      const status = parseAssignmentStatus(res.body);
+      const body = res.body as { data?: { id?: number; esim?: EsimAssignmentPayload['esim'] } } | null;
+      const userEsimId = body?.data?.id;
+      if ((res.ok || res.status === 201) && status.has_sim && typeof userEsimId === 'number') {
+        const payload: EsimAssignmentPayload = status.data ?? { esim: body?.data?.esim };
+        applyAssignedSim(payload);
+        setPromptUserEsimId(userEsimId);
+        setPromptQr(payload.esim?.qr_code_data ?? null);
+        setPromptMsisdn(payload.esim?.msisdn ?? payload.esim?.phone_number ?? null);
+        setAssignPrompt('activate');
+        await loadEsims();
+        await loadOrders();
+        return;
+      }
+      setPromptError(apiErrorMessage(res.body, 'Could not assign a number yet. Try again shortly.'));
+    } catch (e: unknown) {
+      setPromptError(e instanceof Error ? e.message : 'Could not assign a number.');
+    } finally {
+      setAssigningSim(false);
+    }
+  };
+
+  const handleExtendActivationDate = async () => {
+    if (!extendDate || !promptOrderId) {
+      setPromptError('Choose a later eSIM activation date.');
+      return;
+    }
+    setAssigningSim(true);
+    setPromptError('');
+    try {
+      const res = await OrderApi.updateActivationDate({
+        order_id: promptOrderId,
+        activation_date: extendDate,
+      });
+      if (!res.ok) {
+        setPromptError(apiErrorMessage(res.body, 'Could not update the eSIM activation date.'));
+        return;
+      }
+      setAssignPrompt(null);
+      setExtendDate('');
+      await loadOrders();
+      await loadEsims();
+    } catch (e: unknown) {
+      setPromptError(e instanceof Error ? e.message : 'Could not update the eSIM activation date.');
+    } finally {
+      setAssigningSim(false);
+    }
+  };
 
   useEffect(() => {
     if (!topUpModalOpen) return;
@@ -894,6 +980,22 @@ export default function DashboardPage() {
             hasPhysicalSimPurchase(ordersRef.current, pendingPay, purchaseRef.current);
 
           if (isPhysicalPurchase && !status.has_sim) {
+            setWaitingForSim(false);
+            setAssignmentLoading(false);
+            return;
+          }
+
+          if (status.status === 'awaiting_confirmation') {
+            setPromptActivationDate(status.activation_date ?? null);
+            setPromptOrderId(status.order_id ?? null);
+            setAssignPrompt((current) => (current === 'activate' ? 'activate' : 'assign'));
+            setWaitingForSim(false);
+            setAssignmentLoading(false);
+            return;
+          }
+
+          if (status.status === 'scheduled') {
+            setAssignPrompt((current) => (current === 'activate' ? 'activate' : null));
             setWaitingForSim(false);
             setAssignmentLoading(false);
             return;
@@ -1156,6 +1258,27 @@ export default function DashboardPage() {
 
   return (
     <div className="min-h-screen" style={{ backgroundColor: '#f6f8f6' }}>
+      {assignPrompt && (
+        <AssignSimPrompt
+          step={assignPrompt}
+          activationDateLabel={formatTripDate(promptActivationDate)}
+          assigning={assigningSim}
+          error={promptError}
+          extendDate={extendDate}
+          minExtendDate={addDaysToIso(new Date().toISOString().slice(0, 10), 1)}
+          userEsimId={promptUserEsimId}
+          qrCodeData={promptQr}
+          msisdn={promptMsisdn}
+          onExtendDateChange={setExtendDate}
+          onAssign={() => void handleAssignNow()}
+          onExtend={() => void handleExtendActivationDate()}
+          onActivated={() => {
+            setAssignPrompt(null);
+            void loadEsims();
+          }}
+          onClose={() => setAssignPrompt(null)}
+        />
+      )}
       {/* Header bar */}
       <div className="bg-white border-b border-slate-100 px-4 py-4 sm:py-5">
         <div className="max-w-5xl mx-auto flex items-center justify-between gap-3">

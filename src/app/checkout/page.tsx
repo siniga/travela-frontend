@@ -313,6 +313,26 @@ export default function CheckoutPage() {
       localStorage.setItem('cart', JSON.stringify(updated));
       return updated;
     });
+
+    const orderId = orderStoredSummary?.order_id;
+    const numericOrderId =
+      typeof orderId === 'number'
+        ? orderId
+        : typeof orderId === 'string' && /^\d+$/.test(orderId)
+          ? Number(orderId)
+          : null;
+    if (!numericOrderId) return;
+
+    void OrderApi.updateActivationDate({
+      order_id: numericOrderId,
+      activation_date: newDateIso,
+    }).then((res) => {
+      if (!res.ok) {
+        setActivationDateError(
+          apiErrorMessage(res.body, 'Could not save the eSIM activation date.')
+        );
+      }
+    });
   };
 
   /** Open a blank tab synchronously on user click (call before any await). */
@@ -1187,6 +1207,43 @@ export default function CheckoutPage() {
                 {currency} {total.toFixed(2)}
               </p>
             </div>
+
+            {cart.simType === 'esim' && !isTopUpFlow && (
+              <div className="bg-white rounded-2xl border border-slate-200 p-5 mb-6">
+                <label className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5 block">
+                  eSIM Activation Date
+                </label>
+                <div className="relative">
+                  <Calendar size={15} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
+                  <input
+                    type="date"
+                    min={todayIso()}
+                    value={cart.tripArrivalDate ?? todayIso()}
+                    onChange={(e) => handleActivationDateChange(e.target.value)}
+                    className="w-full pl-10 pr-4 py-3 rounded-xl border border-slate-200 text-sm text-slate-800 focus:outline-none focus:border-slate-400"
+                  />
+                </div>
+                {activationDateError && (
+                  <p className="text-xs font-medium text-red-600 mt-2">{activationDateError}</p>
+                )}
+                <p className="text-xs text-slate-500 mt-2 leading-relaxed">
+                  Defaults to today. Change it if you want your eSIM to activate on a later date.
+                </p>
+                <p className="text-xs font-semibold mt-2 leading-relaxed" style={{ color: '#112116' }}>
+                  Your plan is valid for {validityDays} days from activation. It will expire on{' '}
+                  {formatDisplayDate(expiryDate)}.
+                </p>
+                {cart.tripArrivalDate && cart.tripArrivalDate > todayIso() && (
+                  <p
+                    className="text-xs font-semibold mt-2 rounded-lg px-3 py-2"
+                    style={{ backgroundColor: 'rgba(217,119,6,0.1)', color: '#b45309' }}
+                  >
+                    Your eSIM will activate on {formatDisplayDate(cart.tripArrivalDate)}, not immediately after
+                    payment.
+                  </p>
+                )}
+              </div>
+            )}
 
             {/* Redirect information card */}
             <div className="bg-white rounded-2xl border border-slate-200 p-6 mb-6">

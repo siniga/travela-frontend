@@ -1,9 +1,9 @@
 'use client';
 
-import { ArrowRight, Check, Loader2, Package, Smartphone, Wifi } from 'lucide-react';
+import { ArrowRight, ArrowUp, Check, Loader2, Package, Smartphone, Wifi } from 'lucide-react';
 import Image from 'next/image';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { Suspense, useEffect, useState } from 'react';
+import { Suspense, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { BundlesApi, EsimsApi } from '@/lib/api';
 import { useAuth } from '@/lib/auth-context';
 import { getOptimisticDataMb } from '@/lib/balance-poll';
@@ -50,6 +50,37 @@ function BundlesContent() {
   const [selectedBundleId, setSelectedBundleId] = useState<string | number | null>(null);
   const [simType, setSimType] = useState<SimType | null>(null);
   const [browseAllPlans, setBrowseAllPlans] = useState(false);
+  const bundlesSectionRef = useRef<HTMLDivElement>(null);
+
+  useLayoutEffect(() => {
+    const previous = history.scrollRestoration;
+    history.scrollRestoration = 'manual';
+    const root = document.documentElement;
+    const previousBehavior = root.style.scrollBehavior;
+    root.style.scrollBehavior = 'auto';
+    window.scrollTo(0, 0);
+    root.style.scrollBehavior = previousBehavior;
+    return () => {
+      history.scrollRestoration = previous;
+    };
+  }, []);
+
+  const selectSimType = (type: SimType) => {
+    if (type === simType) {
+      bundlesSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      return;
+    }
+    setSimType(type);
+  };
+
+  const goBackUp = () => {
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  useEffect(() => {
+    if (!simType || loading) return;
+    bundlesSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }, [simType, loading]);
 
   useEffect(() => {
     if (authLoading) return;
@@ -187,7 +218,7 @@ function BundlesContent() {
           <div className="grid grid-cols-2 gap-3">
             <button
               type="button"
-              onClick={() => setSimType('esim')}
+              onClick={() => selectSimType('esim')}
               className="flex flex-col items-center gap-3 p-5 rounded-xl border-2 transition-all text-center"
               style={
                 simType === 'esim'
@@ -220,7 +251,7 @@ function BundlesContent() {
 
             <button
               type="button"
-              onClick={() => setSimType('physical')}
+              onClick={() => selectSimType('physical')}
               className="flex flex-col items-center gap-3 p-5 rounded-xl border-2 transition-all text-center"
               style={
                 simType === 'physical'
@@ -255,7 +286,8 @@ function BundlesContent() {
 
         {/* Bundles — only after SIM type is chosen */}
         {simType && (
-          loading ? (
+          <div ref={bundlesSectionRef} className="scroll-mt-20">
+          {loading ? (
             <div className="flex items-center justify-center py-20">
               <Loader2 size={28} className="animate-spin text-slate-400" />
             </div>
@@ -364,16 +396,45 @@ function BundlesContent() {
                 );
               })}
             </div>
-          )
+          )}
+          </div>
         )}
 
         {/* Bottom padding for sticky bar */}
-        <div className="h-24" />
+        <div className="h-40" />
       </div>
 
-      {/* Sticky checkout bar */}
+      {simType && !loading && (
+        <div className="fixed right-4 bottom-6 z-50">
+          <button
+            type="button"
+            onClick={goBackUp}
+            className="inline-flex items-center gap-2 px-4 py-3 rounded-2xl text-sm font-bold text-white shadow-xl"
+            style={{ backgroundColor: '#112116' }}
+          >
+            <ArrowUp size={16} />
+            Go back
+          </button>
+        </div>
+      )}
+
+      <style>{`
+        .travela-cta-rise { transform: translate(-50%, 0); }
+        @keyframes travela-cta-rise {
+          from { transform: translate(-50%, 140%); }
+          to { transform: translate(-50%, 0); }
+        }
+        @media (prefers-reduced-motion: reduce) {
+          .travela-cta-rise { animation: none !important; }
+        }
+      `}</style>
+      {/* Sticky checkout bar — rises from the bottom edge and rests just above it */}
       {selectedBundle && simType && (
-        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-40 px-4 w-full max-w-sm">
+        <div
+          key={String(selectedBundle.id)}
+          className="travela-cta-rise fixed bottom-20 left-1/2 z-40 w-full max-w-sm px-4"
+          style={{ animation: 'travela-cta-rise 500ms cubic-bezier(0.22, 1, 0.36, 1) both' }}
+        >
           <button
             type="button"
             onClick={handleCheckout}

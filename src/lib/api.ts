@@ -336,6 +336,18 @@ export const OrderApi = {
     });
     return toApiResult(res);
   },
+  /** PATCH /me/esims/activation-date — move the eSIM activation date before a number is assigned */
+  updateActivationDate: async (payload: {
+    activation_date: string;
+    order_id?: number;
+  }): Promise<ApiResult> => {
+    const res = await authFetch(`${PUBLIC_API_BASE}/me/esims/activation-date`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    return toApiResult(res);
+  },
   // TODO: GET /orders/:draftId
   getByDraftId: async (_draftId: string) => ({ data: {} }),
   // TODO: POST /preorders/drafts
@@ -375,6 +387,8 @@ export type EsimAssignmentStatus = {
   status?: string;
   poll_again?: boolean;
   retry_after_seconds?: number;
+  activation_date?: string | null;
+  order_id?: number | null;
   inventory?: { available?: number };
   data?: EsimAssignmentPayload;
 };
