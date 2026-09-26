@@ -395,8 +395,7 @@ export default function LandingPage() {
                       1
                     </span>
                     <span>
-                      Open your Phone app and dial{' '}
-                      <span className="font-extrabold tracking-wide">*#06#</span>
+                      Dial <span className="font-extrabold tracking-wide">*#06#</span> in your phone.
                     </span>
                   </li>
                   <li className="flex gap-3">
@@ -407,7 +406,8 @@ export default function LandingPage() {
                       2
                     </span>
                     <span>
-                      If you see <span className="font-extrabold">EID</span>, your phone supports eSIM.
+                      If you see an <span className="font-extrabold">EID</span> number with a barcode,
+                      your phone supports eSIM.
                     </span>
                   </li>
                   <li className="flex gap-3">
@@ -418,8 +418,8 @@ export default function LandingPage() {
                       3
                     </span>
                     <span>
-                      No EID? Choose a <span className="font-extrabold">physical SIM</span> on the next
-                      page instead.
+                      If you don&apos;t see it, your phone doesn&apos;t support eSIM — choose a{' '}
+                      <span className="font-extrabold">physical SIM</span> on the next page instead.
                     </span>
                   </li>
                 </ol>
