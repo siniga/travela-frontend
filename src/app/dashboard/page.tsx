@@ -927,10 +927,6 @@ export default function DashboardPage() {
     } else if (optimisticDataMb != null && optimisticDataMb > 0) {
       setPurchase((current) => current ?? purchaseFromPurchasedMb(optimisticDataMb));
     }
-<<<<<<< HEAD
-  }, [isAuthenticated, optimisticDataMb]);
-=======
-    setPendingPayment(readPendingPaymentFromStorage());
     try {
       if (sessionStorage.getItem('travela:showReceiptPrompt') === '1') {
         setShowReceiptPrompt(true);
@@ -939,8 +935,7 @@ export default function DashboardPage() {
     } catch {
       /* ignore */
     }
-  }, [isAuthenticated]);
->>>>>>> ef881a468405af496e6efe9af6808535f906c2ef
+  }, [isAuthenticated, optimisticDataMb]);
 
   useEffect(() => {
     if (!showReceiptPrompt || !pendingPayment?.order_id) return;
