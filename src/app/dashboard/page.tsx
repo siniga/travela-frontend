@@ -699,8 +699,12 @@ export default function DashboardPage() {
       setUserEsims(parsed.esims);
       setLatestOrderBundle(parsed.latestOrderBundle);
       if (parsed.assignmentPrompt?.status === 'awaiting_confirmation' && parsed.esims.length === 0) {
-        setPromptActivationDate(parsed.assignmentPrompt.activation_date ?? null);
+        const activationIso = parsed.assignmentPrompt.activation_date ?? null;
+        setPromptActivationDate(activationIso);
         setPromptOrderId(parsed.assignmentPrompt.order_id ?? null);
+        if (activationIso) {
+          setExtendDate(activationIso.slice(0, 10));
+        }
         setAssignPrompt((current) => (current === 'activate' ? 'activate' : 'assign'));
       } else if (parsed.assignmentPrompt?.status === 'scheduled' && parsed.esims.length === 0) {
         setAssignPrompt((current) => (current === 'activate' ? 'activate' : null));
@@ -1014,8 +1018,12 @@ export default function DashboardPage() {
           }
 
           if (status.status === 'awaiting_confirmation') {
-            setPromptActivationDate(status.activation_date ?? null);
+            const activationIso = status.activation_date ?? null;
+            setPromptActivationDate(activationIso);
             setPromptOrderId(status.order_id ?? null);
+            if (activationIso) {
+              setExtendDate(activationIso.slice(0, 10));
+            }
             setAssignPrompt((current) => (current === 'activate' ? 'activate' : 'assign'));
             setWaitingForSim(false);
             setAssignmentLoading(false);
@@ -1203,11 +1211,6 @@ export default function DashboardPage() {
     Boolean(pendingPayment && pendingPayment.simType !== 'physical') ||
     Boolean(purchase && purchase.simType !== 'physical') ||
     Boolean(latestPaidOrder && latestPaidOrder.metadata?.simType !== 'physical');
-  const simStatusDisplay = !hasActiveEsim && hasPurchasedPlan
-    ? 'Setting up'
-    : isEsimType
-      ? esimDeviceStatusLabel(primaryUserEsim, simStatus)
-      : simStatusLabel(simStatus);
   const simTypeTitle = simTypeLabel(simType);
 
   const physicalPickupDetails = resolvePhysicalPickupDetails(
@@ -1281,6 +1284,34 @@ export default function DashboardPage() {
   const daysRemaining = simIsActive ? daysUntil(deactivationIso) : null;
   const daysRemainingLabel = daysLeftLabel(daysRemaining);
 
+  const todayPart = toDatePart(new Date().toISOString());
+  const activationDay = toDatePart(scheduledActivationIso);
+  /** Plan window ended — user cannot use this SIM anymore. */
+  const isPlanExpired = Boolean(simIsActive && daysRemaining != null && daysRemaining < 0);
+  /**
+   * Purchased with a future activation date — number/activation details stay hidden
+   * until that day; only purchase confirmation + receipt for now.
+   */
+  const isReservedFuture = Boolean(
+    hasPurchasedPlan &&
+      !simIsActive &&
+      !isPlanExpired &&
+      activationDay &&
+      todayPart &&
+      activationDay > todayPart
+  );
+
+  const planLifecycleLabel = isPlanExpired
+    ? 'Expired'
+    : isReservedFuture
+      ? 'Reserved'
+      : !hasActiveEsim && hasPurchasedPlan
+        ? 'Setting up'
+        : isEsimType
+          ? esimDeviceStatusLabel(primaryUserEsim, simStatus)
+          : simStatusLabel(simStatus);
+  const simStatusDisplay = planLifecycleLabel;
+
   const purchasedDataMb = orders
     .filter(isPaidOrder)
     .flatMap((o) => o.order_items ?? [])
@@ -1311,10 +1342,11 @@ export default function DashboardPage() {
 
   return (
     <div className="min-h-screen" style={{ backgroundColor: '#f6f8f6' }}>
-      {assignPrompt && (
+      {assignPrompt && !isReservedFuture && !isPlanExpired && (
         <AssignSimPrompt
           step={assignPrompt}
           activationDateLabel={formatTripDate(promptActivationDate)}
+          currentActivationIso={promptActivationDate ? promptActivationDate.slice(0, 10) : null}
           assigning={assigningSim}
           error={promptError}
           extendDate={extendDate}
@@ -1672,6 +1704,127 @@ export default function DashboardPage() {
           </div>
         ) : hasActiveEsim || hasPurchasedPlan ? (
           <>
+            {/* Future activation — reserved: receipt only, no number / activate details yet */}
+            {isReservedFuture ? (
+              <div className="space-y-4">
+                <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-sm">
+                  <div
+                    className="px-5 py-4 flex items-start justify-between gap-3"
+                    style={{ backgroundColor: 'rgba(17,33,22,0.06)' }}
+                  >
+                    <div className="min-w-0">
+                      <p className="text-xs font-bold uppercase tracking-widest text-slate-400 mb-1">
+                        Your purchase
+                      </p>
+                      <h2 className="text-lg font-extrabold text-slate-900">Number reserved</h2>
+                      <p className="text-sm text-slate-600 mt-2 leading-relaxed">
+                        Your plan activates on{' '}
+                        <span className="font-extrabold text-slate-900">
+                          {formatTripDate(scheduledActivationIso)}
+                        </span>
+                        . Until that day, your Travela number stays reserved. You&apos;ll see the
+                        assigned number and activation steps here when the date arrives.
+                      </p>
+                    </div>
+                    <span
+                      className="text-xs font-extrabold px-3 py-1.5 rounded-full flex-shrink-0"
+                      style={{ backgroundColor: 'rgba(17,33,22,0.12)', color: '#112116' }}
+                    >
+                      Reserved
+                    </span>
+                  </div>
+                  <div className="px-5 py-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 border-t border-slate-100">
+                    <div className="min-w-0">
+                      <p className="text-xs font-bold uppercase tracking-wide text-slate-400">Plan</p>
+                      <p className="text-sm font-extrabold text-slate-900 truncate">{esimTitle}</p>
+                      <p className="text-xs text-slate-500 mt-1">
+                        {planValidityDays}-day plan · activates {formatTripDate(scheduledActivationIso)}
+                      </p>
+                    </div>
+                    <Link
+                      href={receiptHref}
+                      className="inline-flex items-center justify-center gap-2 px-4 py-3 rounded-xl text-sm font-bold text-white hover:opacity-90"
+                      style={{ backgroundColor: '#112116' }}
+                    >
+                      <Download size={16} />
+                      View purchase receipt
+                    </Link>
+                  </div>
+                </div>
+              </div>
+            ) : isPlanExpired ? (
+              /* Expired — clear, non-usable state */
+              <div className="space-y-4">
+                <div className="sim-card-shape p-4 sm:p-6 pt-7 sm:pt-8 text-white opacity-95">
+                  <div className="flex items-start justify-between gap-3 mb-5 flex-wrap">
+                    <div className="flex items-start gap-3 min-w-0 flex-1">
+                      <div className="sim-chip mt-5 opacity-60" aria-hidden>
+                        <span /><span /><span /><span /><span /><span />
+                      </div>
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2 mb-1">
+                          {isEsimType ? (
+                            <Wifi size={14} className="text-white/40" />
+                          ) : (
+                            <Smartphone size={14} className="text-white/40" />
+                          )}
+                          <p className="text-xs font-bold uppercase tracking-widest text-white/40">
+                            {simTypeTitle}
+                          </p>
+                        </div>
+                        {assignedMsisdn && (
+                          <h2 className="text-2xl sm:text-3xl font-black tracking-tight break-all leading-tight text-white/80">
+                            {formatMsisdn(assignedMsisdn)}
+                          </h2>
+                        )}
+                        <p className="text-base font-black text-white/80 mt-1">{esimTitle}</p>
+                        <p className="text-sm font-semibold mt-2 text-white/55">
+                          This plan has ended and can no longer be used.
+                        </p>
+                        {formatTripDate(deactivationIso) && (
+                          <p className="text-xs font-semibold mt-2 text-white/45">
+                            Ended {formatTripDate(deactivationIso)}
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                    <span
+                      className="text-xs font-extrabold px-3 py-1.5 rounded-full flex-shrink-0"
+                      style={{ backgroundColor: 'rgba(248,113,113,0.25)', color: '#fecaca' }}
+                    >
+                      Expired
+                    </span>
+                  </div>
+                </div>
+
+                <div className="bg-white rounded-2xl border border-slate-200 p-5 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+                  <div>
+                    <p className="text-sm font-extrabold text-slate-900">Need data again?</p>
+                    <p className="text-sm text-slate-500 mt-1">
+                      Top up or buy a new plan to stay connected.
+                    </p>
+                  </div>
+                  <div className="flex flex-col sm:flex-row gap-2">
+                    <Link
+                      href={receiptHref}
+                      className="inline-flex items-center justify-center gap-2 px-4 py-3 rounded-xl text-sm font-bold border border-slate-200 text-slate-700 hover:bg-slate-50"
+                    >
+                      <Receipt size={16} />
+                      Receipt
+                    </Link>
+                    <button
+                      type="button"
+                      onClick={() => setTopUpModalOpen(true)}
+                      className="inline-flex items-center justify-center gap-2 px-4 py-3 rounded-xl text-sm font-bold text-white hover:opacity-90"
+                      style={{ backgroundColor: '#112116' }}
+                    >
+                      Top Up
+                    </button>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <>
             {/* Activation instructions — shown first so users know what the buttons below do */}
             {isEsimType && hasActiveEsim && !primaryUserEsim?.device_activated_at && (
               <div className="bg-white rounded-2xl border border-dashed border-slate-300 p-6">
@@ -1756,16 +1909,6 @@ export default function DashboardPage() {
                     <p className="text-sm font-semibold mt-1" style={{ color: '#17cf54' }}>
                       Valid for {planValidityDays} days
                     </p>
-                    {!simIsActive && formatTripDate(scheduledActivationIso) && (
-                      <div className="mt-3">
-                        <p className="text-[10px] font-bold uppercase tracking-widest text-white/50">
-                          Scheduled activation
-                        </p>
-                        <p className="text-sm font-bold mt-0.5" style={{ color: '#17cf54' }}>
-                          {formatTripDate(scheduledActivationIso)}
-                        </p>
-                      </div>
-                    )}
                     {purchase?.trip?.countryName && (
                       <p className="text-sm font-semibold mt-2 text-white/80">{purchase.trip.countryName}</p>
                     )}
@@ -1934,9 +2077,7 @@ export default function DashboardPage() {
                   ),
                   label: 'SIM Type',
                   value: simTypeTitle,
-                  sub: isEsimType
-                    ? esimDeviceStatusLabel(primaryUserEsim, simStatus)
-                    : simStatusLabel(simStatus),
+                  sub: simStatusDisplay,
                 },
                 {
                   icon: <Globe size={16} style={{ color: '#17cf54' }} />,
@@ -1998,6 +2139,8 @@ export default function DashboardPage() {
                   )}
                 </p>
               </div>
+            )}
+              </>
             )}
           </>
         ) : isPhysicalSimAwaitingPickup ? null : (
