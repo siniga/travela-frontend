@@ -632,15 +632,13 @@ export default function DashboardPage() {
   const [waitingForSim, setWaitingForSim] = useState(false);
   const [esimsError, setEsimsError] = useState('');
   const [showQrCode, setShowQrCode] = useState(false);
-  const [assignPrompt, setAssignPrompt] = useState<'assign' | 'activate' | null>(null);
+  const [assignPrompt, setAssignPrompt] = useState(false);
   const [promptActivationDate, setPromptActivationDate] = useState<string | null>(null);
   const [promptOrderId, setPromptOrderId] = useState<number | null>(null);
-  const [promptUserEsimId, setPromptUserEsimId] = useState<number | null>(null);
-  const [promptQr, setPromptQr] = useState<string | null>(null);
-  const [promptMsisdn, setPromptMsisdn] = useState<string | null>(null);
   const [assigningSim, setAssigningSim] = useState(false);
   const [promptError, setPromptError] = useState('');
   const [extendDate, setExtendDate] = useState('');
+  const datePromptDismissedRef = useRef(false);
   const [topUpModalOpen, setTopUpModalOpen] = useState(false);
   const [topUpModalShown, setTopUpModalShown] = useState(false);
   const [topUpModalClosing, setTopUpModalClosing] = useState(false);
@@ -705,9 +703,12 @@ export default function DashboardPage() {
         if (activationIso) {
           setExtendDate(activationIso.slice(0, 10));
         }
-        setAssignPrompt((current) => (current === 'activate' ? 'activate' : 'assign'));
-      } else if (parsed.assignmentPrompt?.status === 'scheduled' && parsed.esims.length === 0) {
-        setAssignPrompt((current) => (current === 'activate' ? 'activate' : null));
+        if (!datePromptDismissedRef.current) {
+          setAssignPrompt(true);
+        }
+      } else {
+        datePromptDismissedRef.current = false;
+        setAssignPrompt(false);
       }
     } catch (e: unknown) {
       const fallback =
@@ -736,7 +737,7 @@ export default function DashboardPage() {
 
   const handleExtendActivationDate = async () => {
     if (!extendDate || !promptOrderId) {
-      setPromptError('Choose a later eSIM activation date.');
+      setPromptError('Choose a valid eSIM activation date.');
       return;
     }
     setAssigningSim(true);
@@ -750,7 +751,8 @@ export default function DashboardPage() {
         setPromptError(apiErrorMessage(res.body, 'Could not update the eSIM activation date.'));
         return;
       }
-      setAssignPrompt(null);
+      datePromptDismissedRef.current = true;
+      setAssignPrompt(false);
       setExtendDate('');
       await loadOrders();
       await loadEsims();
@@ -759,6 +761,12 @@ export default function DashboardPage() {
     } finally {
       setAssigningSim(false);
     }
+  };
+
+  const dismissAssignPrompt = () => {
+    datePromptDismissedRef.current = true;
+    setAssignPrompt(false);
+    setPromptError('');
   };
 
   useEffect(() => {
@@ -997,14 +1005,18 @@ export default function DashboardPage() {
             if (activationIso) {
               setExtendDate(activationIso.slice(0, 10));
             }
-            setAssignPrompt((current) => (current === 'activate' ? 'activate' : 'assign'));
+            if (!datePromptDismissedRef.current) {
+              setAssignPrompt(true);
+            }
             setWaitingForSim(false);
             setAssignmentLoading(false);
             return;
           }
 
+          datePromptDismissedRef.current = false;
+          setAssignPrompt(false);
+
           if (status.status === 'scheduled') {
-            setAssignPrompt((current) => (current === 'activate' ? 'activate' : null));
             setWaitingForSim(false);
             setAssignmentLoading(false);
             return;
@@ -1315,26 +1327,18 @@ export default function DashboardPage() {
 
   return (
     <div className="min-h-screen" style={{ backgroundColor: '#f6f8f6' }}>
-      {assignPrompt && !isReservedFuture && !isPlanExpired && (
+      {assignPrompt && !isPlanExpired && (
         <AssignSimPrompt
-          step={assignPrompt}
           activationDateLabel={formatTripDate(promptActivationDate)}
           currentActivationIso={promptActivationDate ? promptActivationDate.slice(0, 10) : null}
-          assigning={assigningSim}
+          saving={assigningSim}
           error={promptError}
           extendDate={extendDate}
           minExtendDate={addDaysToIso(new Date().toISOString().slice(0, 10), 1)}
-          userEsimId={promptUserEsimId}
-          qrCodeData={promptQr}
-          msisdn={promptMsisdn}
           onExtendDateChange={setExtendDate}
-          onExtend={() => void handleExtendActivationDate()}
-          onConfirm={() => setAssignPrompt(null)}
-          onActivated={() => {
-            setAssignPrompt(null);
-            void loadEsims();
-          }}
-          onClose={() => setAssignPrompt(null)}
+          onSaveDate={() => void handleExtendActivationDate()}
+          onConfirm={dismissAssignPrompt}
+          onClose={dismissAssignPrompt}
         />
       )}
       {/* Header bar */}
