@@ -25,8 +25,10 @@ type AssignSimPromptProps = {
   qrCodeData?: string | null;
   msisdn?: string | null;
   onExtendDateChange: (value: string) => void;
-  onAssign: () => void;
+  /** Save a new activation date (when the picker differs from current). */
   onExtend: () => void;
+  /** Dismiss after confirming the current date — number assigns automatically. */
+  onConfirm: () => void;
   onActivated: (activatedAt: string) => void;
   onClose: () => void;
 };
@@ -43,8 +45,8 @@ export default function AssignSimPrompt({
   qrCodeData,
   msisdn,
   onExtendDateChange,
-  onAssign,
   onExtend,
+  onConfirm,
   onActivated,
   onClose,
 }: AssignSimPromptProps) {
@@ -86,8 +88,8 @@ export default function AssignSimPrompt({
               Confirm your activation date
             </h2>
             <p className="text-sm text-slate-500 mt-2 leading-relaxed">
-              A number is not assigned yet. Keep your current date and assign now, or pick a later
-              date and tap Change.
+              Your number will be assigned automatically. Confirm this date, or pick a later one if
+              you need to travel later.
             </p>
 
             <div
@@ -135,7 +137,7 @@ export default function AssignSimPrompt({
                   className="text-xs font-semibold mt-2 rounded-lg px-3 py-2"
                   style={{ backgroundColor: BRAND.accentSoft, color: BRAND.primary }}
                 >
-                  New date selected — tap Change to save it.
+                  New date selected — tap Save date to update it.
                 </p>
               )}
             </div>
@@ -147,57 +149,35 @@ export default function AssignSimPrompt({
             )}
 
             <div className="mt-6 flex flex-col gap-2.5">
-              {hasDateChange ? (
-                <button
-                  type="button"
-                  onClick={onExtend}
-                  disabled={assigning || !extendDate}
-                  className="w-full py-3.5 rounded-xl text-sm font-bold text-white disabled:opacity-60 hover:opacity-90 transition-opacity"
-                  style={{ backgroundColor: BRAND.primary }}
-                >
-                  {assigning ? (
-                    <span className="inline-flex items-center justify-center gap-2">
-                      <Loader2 size={16} className="animate-spin" /> Saving…
-                    </span>
-                  ) : (
-                    'Change'
-                  )}
-                </button>
-              ) : (
-                <button
-                  type="button"
-                  onClick={onAssign}
-                  disabled={assigning}
-                  className="w-full py-3.5 rounded-xl text-sm font-bold text-white disabled:opacity-60 hover:opacity-90 transition-opacity"
-                  style={{ backgroundColor: BRAND.primary }}
-                >
-                  {assigning ? (
-                    <span className="inline-flex items-center justify-center gap-2">
-                      <Loader2 size={16} className="animate-spin" /> Assigning…
-                    </span>
-                  ) : (
-                    'Assign now'
-                  )}
-                </button>
-              )}
+              <button
+                type="button"
+                onClick={hasDateChange ? onExtend : onConfirm}
+                disabled={assigning || (hasDateChange && !extendDate)}
+                className="w-full py-3.5 rounded-xl text-sm font-bold text-white disabled:opacity-60 hover:opacity-90 transition-opacity"
+                style={{ backgroundColor: BRAND.primary }}
+              >
+                {assigning ? (
+                  <span className="inline-flex items-center justify-center gap-2">
+                    <Loader2 size={16} className="animate-spin" /> Saving…
+                  </span>
+                ) : hasDateChange ? (
+                  'Save date'
+                ) : (
+                  'Confirm date'
+                )}
+              </button>
 
               <button
                 type="button"
                 onClick={handleCancel}
                 disabled={assigning}
-                className="w-full py-3.5 rounded-xl text-sm font-bold disabled:opacity-60 transition-colors hover:opacity-90"
-                style={
-                  hasDateChange
-                    ? {
-                        backgroundColor: BRAND.accent,
-                        color: BRAND.primary,
-                      }
-                    : {
-                        backgroundColor: 'white',
-                        color: BRAND.primary,
-                        border: '1.5px solid rgba(17,33,22,0.18)',
-                      }
-                }
+                className="w-full py-3.5 rounded-xl text-sm font-bold bg-white disabled:opacity-60 transition-colors hover:bg-slate-50"
+                style={{
+                  color: BRAND.primary,
+                  border: hasDateChange
+                    ? `1.5px solid ${BRAND.primary}`
+                    : '1.5px solid rgba(17,33,22,0.18)',
+                }}
               >
                 Cancel
               </button>
@@ -212,7 +192,7 @@ export default function AssignSimPrompt({
               Activate your eSIM
             </h2>
             <p className="text-sm text-slate-500 mt-2 leading-relaxed mb-5">
-              Your number is assigned. Activate your eSIM to finish setup.
+              Your number is ready. Activate your eSIM to finish setup.
             </p>
             {userEsimId != null && (
               <ActivateEsimButton

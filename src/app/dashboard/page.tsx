@@ -734,33 +734,6 @@ export default function DashboardPage() {
     []
   );
 
-  const handleAssignNow = async () => {
-    setAssigningSim(true);
-    setPromptError('');
-    try {
-      const res = await EsimsApi.register();
-      const status = parseAssignmentStatus(res.body);
-      const body = res.body as { data?: { id?: number; esim?: EsimAssignmentPayload['esim'] } } | null;
-      const userEsimId = body?.data?.id;
-      if ((res.ok || res.status === 201) && status.has_sim && typeof userEsimId === 'number') {
-        const payload: EsimAssignmentPayload = status.data ?? { esim: body?.data?.esim };
-        applyAssignedSim(payload);
-        setPromptUserEsimId(userEsimId);
-        setPromptQr(payload.esim?.qr_code_data ?? null);
-        setPromptMsisdn(payload.esim?.msisdn ?? payload.esim?.phone_number ?? null);
-        setAssignPrompt('activate');
-        await loadEsims();
-        await loadOrders();
-        return;
-      }
-      setPromptError(apiErrorMessage(res.body, 'Could not assign a number yet. Try again shortly.'));
-    } catch (e: unknown) {
-      setPromptError(e instanceof Error ? e.message : 'Could not assign a number.');
-    } finally {
-      setAssigningSim(false);
-    }
-  };
-
   const handleExtendActivationDate = async () => {
     if (!extendDate || !promptOrderId) {
       setPromptError('Choose a later eSIM activation date.');
@@ -1355,8 +1328,8 @@ export default function DashboardPage() {
           qrCodeData={promptQr}
           msisdn={promptMsisdn}
           onExtendDateChange={setExtendDate}
-          onAssign={() => void handleAssignNow()}
           onExtend={() => void handleExtendActivationDate()}
+          onConfirm={() => setAssignPrompt(null)}
           onActivated={() => {
             setAssignPrompt(null);
             void loadEsims();
