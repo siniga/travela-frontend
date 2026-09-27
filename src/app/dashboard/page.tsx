@@ -15,10 +15,12 @@ import { useAuth } from '@/lib/auth-context';
 import { getBalancePollContext, getOptimisticDataMb } from '@/lib/balance-poll';
 import { displayBundleName } from '@/lib/bundles';
 import { dataMbFromAssignment } from '@/lib/esim-balance';
+import { resolvePaymentTargetUrl } from '@/lib/payment';
 import { useBalancePoll } from '@/hooks/useBalancePoll';
 import {
   CheckCircle,
   Clock,
+  CreditCard,
   Download,
   Globe,
   Info,
@@ -62,7 +64,10 @@ interface PurchaseData {
 interface PendingPaymentData {
   order_id?: string | number;
   draft_id?: string;
+  payment_url?: string;
   simType?: string;
+  country?: string;
+  countryName?: string;
   items?: PurchaseData['items'];
   trip?: PurchaseData['trip'];
   total?: number;
@@ -499,6 +504,48 @@ function isPaidOrder(order: OrderRecord): boolean {
   return status === 'paid' || status === 'completed';
 }
 
+/** Order was started but payment is still pending, failed, or abandoned — user can pay again. */
+function isUnpaidPayableOrder(order: OrderRecord): boolean {
+  if (isPaidOrder(order)) return false;
+  if (order.paid_at) return false;
+  const status = (order.payment_status || order.status || '').toLowerCase();
+  const unpaid = new Set([
+    'pending',
+    'pending_payment',
+    'unpaid',
+    'failed',
+    'payment_failed',
+    'cancelled',
+    'canceled',
+    'expired',
+    'awaiting_payment',
+    'payment_required',
+    'initiated',
+    'created',
+    'draft',
+  ]);
+  return unpaid.has(status) || !status;
+}
+
+function findLatestUnpaidOrder(orders: OrderRecord[]): OrderRecord | null {
+  return (
+    orders
+      .filter(isUnpaidPayableOrder)
+      .sort(
+        (a, b) =>
+          new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+      )[0] ?? null
+  );
+}
+
+function unpaidStatusLabel(status?: string | null) {
+  const s = (status ?? 'pending').toLowerCase();
+  if (s.includes('fail')) return 'Payment failed';
+  if (s.includes('cancel')) return 'Payment cancelled';
+  if (s.includes('expir')) return 'Payment expired';
+  return 'Payment pending';
+}
+
 function formatOrderItemData(mb?: number | null) {
   if (mb == null || mb <= 0) return '—';
   return mb >= 1024 ? `${(mb / 1024).toFixed(0)} GB` : `${mb} MB`;
@@ -506,8 +553,8 @@ function formatOrderItemData(mb?: number | null) {
 
 function resolvePhysicalPickupDetails(
   orders: OrderRecord[],
-  pendingPayment: PendingPaymentData | null,
-  purchase: PurchaseData | null
+  _pendingPayment: PendingPaymentData | null,
+  _purchase: PurchaseData | null
 ): PhysicalPickupDetails | null {
   const apiOrder = orders
     .filter((o) => o.metadata?.simType === 'physical' && isPaidOrder(o))
@@ -547,37 +594,8 @@ function resolvePhysicalPickupDetails(
     };
   }
 
-  const localSource = pendingPayment?.simType === 'physical' ? pendingPayment : null;
-  const purchaseSource =
-    !localSource && purchase?.simType === 'physical' ? purchase : null;
-  const source = localSource ?? purchaseSource;
-  if (!source) return null;
-
-  const items =
-    source.items?.map((item) => ({
-      name: item.bundle.name,
-      dataLabel: formatOrderItemData(item.bundle.data_mb),
-      validityDays: item.bundle.validity_days,
-      price:
-        item.bundle.price != null
-          ? Number(item.bundle.price).toFixed(2)
-          : undefined,
-      currency: item.bundle.currency ?? source.currency,
-    })) ?? [];
-
-  const validityDays = items[0]?.validityDays ?? 30;
-  return {
-    draftId: localSource?.draft_id ?? purchase?.draftId,
-    orderId: localSource?.order_id ?? purchase?.orderId,
-    countryName: source.trip?.countryName,
-    deactivationDate:
-      source.trip?.departureDate ??
-      deactivationIsoFrom(source.trip?.arrivalDate ?? purchase?.date, validityDays),
-    items,
-    total: source.total != null ? Number(source.total).toFixed(2) : undefined,
-    currency: source.currency,
-    status: 'paid',
-  };
+  // Unpaid local pendingPayment / lastPurchase must not unlock pickup UI.
+  return null;
 }
 
 function hasPhysicalSimPurchase(
@@ -646,6 +664,8 @@ export default function DashboardPage() {
   const [topUpBundlesLoading, setTopUpBundlesLoading] = useState(false);
   const [showReceiptPrompt, setShowReceiptPrompt] = useState(false);
   const [receiptOrderId, setReceiptOrderId] = useState<string | null>(null);
+  const [retryPaying, setRetryPaying] = useState(false);
+  const [retryPayError, setRetryPayError] = useState('');
   const ordersRef = useRef(orders);
   const purchaseRef = useRef(purchase);
 
@@ -768,6 +788,104 @@ export default function DashboardPage() {
     setAssignPrompt(false);
     setPromptError('');
   };
+
+  const handleRetryPayment = useCallback(async () => {
+    setRetryPayError('');
+    setRetryPaying(true);
+    try {
+      const unpaidOrder = findLatestUnpaidOrder(orders);
+      const pending = pendingPayment ?? readPendingPaymentFromStorage();
+
+      const orderId = unpaidOrder?.id ?? pending?.order_id;
+      if (orderId == null) {
+        throw new Error('No unpaid order found. Start checkout again from bundles.');
+      }
+
+      const draftId = unpaidOrder?.draft_id ?? pending?.draft_id;
+      const amount = unpaidOrder
+        ? Number(unpaidOrder.total_amount)
+        : Number(pending?.total ?? 0);
+      const currency = unpaidOrder?.currency ?? pending?.currency ?? 'USD';
+      const email =
+        (typeof user?.email === 'string' ? user.email : '') ||
+        pending?.email ||
+        '';
+      const country =
+        unpaidOrder?.metadata?.country ?? pending?.country ?? 'TZ';
+      const countryName =
+        unpaidOrder?.metadata?.countryName ??
+        unpaidOrder?.trip?.destination_country ??
+        pending?.countryName ??
+        pending?.trip?.countryName ??
+        'Tanzania';
+      const simType =
+        unpaidOrder?.metadata?.simType ?? pending?.simType ?? 'esim';
+
+      const targetUrl = resolvePaymentTargetUrl(pending?.payment_url, {
+        amount: Number.isFinite(amount) ? amount : 0,
+        currency,
+        email,
+        country,
+        countryName,
+        simType,
+        orderId,
+        draftId,
+      });
+
+      // Keep pending snapshot so the dashboard can keep offering retry until paid.
+      const snapshot = {
+        order_id: orderId,
+        draft_id: draftId,
+        payment_url: pending?.payment_url,
+        items:
+          pending?.items ??
+          unpaidOrder?.order_items?.map((item) => ({
+            bundle: {
+              name: item.bundle_name,
+              data_mb: item.data_amount ?? undefined,
+              validity_days: item.validity_days,
+              price: item.price,
+              currency: item.currency,
+            },
+            quantity: 1,
+          })),
+        trip: pending?.trip ?? {
+          countryName,
+          arrivalDate: unpaidOrder?.trip?.arrival_date,
+          departureDate: unpaidOrder?.trip?.departure_date,
+          duration: unpaidOrder?.trip?.duration_days,
+        },
+        simType,
+        country,
+        countryName,
+        total: Number.isFinite(amount) ? amount : pending?.total,
+        currency,
+        email,
+        createdAt: new Date().toISOString(),
+      };
+      localStorage.setItem('pendingPayment', JSON.stringify(snapshot));
+      setPendingPayment(snapshot);
+
+      try {
+        sessionStorage.setItem('travela:showReceiptPrompt', '1');
+        sessionStorage.setItem('travela:receiptOrderId', String(orderId));
+      } catch {
+        /* ignore */
+      }
+      setShowReceiptPrompt(true);
+      setReceiptOrderId(String(orderId));
+
+      const tab = window.open(targetUrl, '_blank');
+      if (tab) tab.opener = null;
+      else throw new Error('Could not open the payment page. Allow pop-ups and try again.');
+    } catch (e: unknown) {
+      setRetryPayError(
+        e instanceof Error ? e.message : 'Could not restart payment. Try again.'
+      );
+    } finally {
+      setRetryPaying(false);
+    }
+  }, [orders, pendingPayment, user?.email]);
 
   useEffect(() => {
     if (!topUpModalOpen) return;
@@ -987,12 +1105,25 @@ export default function DashboardPage() {
 
           const status = parseAssignmentStatus(statusRes.body);
           const pendingPay = readPendingPaymentFromStorage();
-          const justPaid = Boolean(pendingPay || getBalancePollContext());
+          const pendingOrderPaid = Boolean(
+            pendingPay?.order_id &&
+              ordersRef.current.some(
+                (o) => String(o.id) === String(pendingPay.order_id) && isPaidOrder(o)
+              )
+          );
+          // pendingPayment alone means checkout started — not that money cleared.
+          const justPaid = Boolean(getBalancePollContext() || pendingOrderPaid);
           const isPhysicalPurchase =
             pendingPay?.simType === 'physical' ||
             hasPhysicalSimPurchase(ordersRef.current, pendingPay, purchaseRef.current);
 
           if (isPhysicalPurchase && !status.has_sim) {
+            setWaitingForSim(false);
+            setAssignmentLoading(false);
+            return;
+          }
+
+          if (status.status === 'payment_required' && !pendingOrderPaid) {
             setWaitingForSim(false);
             setAssignmentLoading(false);
             return;
@@ -1117,6 +1248,44 @@ export default function DashboardPage() {
         new Date(b.paid_at ?? b.created_at).getTime() -
         new Date(a.paid_at ?? a.created_at).getTime()
     )[0];
+  const latestUnpaidOrder = findLatestUnpaidOrder(orders);
+  const pendingOrderIsPaid = Boolean(
+    pendingPayment?.order_id &&
+      orders.some(
+        (o) => String(o.id) === String(pendingPayment.order_id) && isPaidOrder(o)
+      )
+  );
+  const pendingNeedsPayment = Boolean(
+    pendingPayment &&
+      !pendingOrderIsPaid &&
+      (pendingPayment.order_id == null ||
+        !orders.some(
+          (o) => String(o.id) === String(pendingPayment.order_id) && isPaidOrder(o)
+        ))
+  );
+  const incompletePaymentOrder = latestUnpaidOrder;
+  const needsPaymentRetry = Boolean(incompletePaymentOrder || pendingNeedsPayment);
+  const incompletePaymentLabel = unpaidStatusLabel(
+    incompletePaymentOrder?.payment_status || incompletePaymentOrder?.status || 'pending'
+  );
+  const incompleteBundleName =
+    displayBundleName(
+      incompletePaymentOrder?.order_items?.[0]?.bundle_name ??
+        pendingPayment?.items?.[0]?.bundle?.name ??
+        purchase?.items?.[0]?.bundle?.name ??
+        null
+    ) || 'your plan';
+  const incompleteAmount =
+    incompletePaymentOrder?.total_amount != null
+      ? Number(incompletePaymentOrder.total_amount)
+      : pendingPayment?.total ?? purchase?.total ?? null;
+  const incompleteCurrency =
+    incompletePaymentOrder?.currency ??
+    pendingPayment?.currency ??
+    purchase?.currency ??
+    'USD';
+  const incompleteOrderId =
+    incompletePaymentOrder?.id ?? pendingPayment?.order_id ?? purchase?.orderId ?? null;
   const apiBundle = primaryUserEsim?.bundle ?? latestOrderBundle ?? null;
 
   const assignedMsisdn =
@@ -1192,10 +1361,12 @@ export default function DashboardPage() {
     Boolean(assignedMsisdn) || userEsims.length > 0;
   const hasPurchasedPlan =
     hasActiveEsim ||
-    Boolean(optimisticDataMb != null && optimisticDataMb > 0) ||
-    Boolean(pendingPayment && pendingPayment.simType !== 'physical') ||
-    Boolean(purchase && purchase.simType !== 'physical') ||
-    Boolean(latestPaidOrder && latestPaidOrder.metadata?.simType !== 'physical');
+    Boolean(latestPaidOrder && latestPaidOrder.metadata?.simType !== 'physical') ||
+    Boolean(
+      !needsPaymentRetry &&
+        optimisticDataMb != null &&
+        optimisticDataMb > 0
+    );
   const simTypeTitle = simTypeLabel(simType);
 
   const physicalPickupDetails = resolvePhysicalPickupDetails(
@@ -1467,7 +1638,81 @@ export default function DashboardPage() {
           </div>
         )}
 
-        {showReceiptPrompt && (
+        {needsPaymentRetry && (
+          <div className="rounded-2xl border border-amber-200 bg-white overflow-hidden shadow-sm">
+            <div
+              className="px-5 py-4 flex items-start justify-between gap-3"
+              style={{ backgroundColor: 'rgba(245,158,11,0.12)' }}
+            >
+              <div className="flex items-start gap-3 min-w-0">
+                <div
+                  className="w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0"
+                  style={{ backgroundColor: '#112116', color: 'white' }}
+                >
+                  <CreditCard size={18} />
+                </div>
+                <div className="min-w-0">
+                  <p className="text-sm font-extrabold text-slate-900">{incompletePaymentLabel}</p>
+                  <p className="text-xs text-slate-600 mt-0.5 leading-relaxed">
+                    Your order was started but payment is not complete yet. Pay again for this order
+                    — once it clears, your number will appear here automatically.
+                  </p>
+                </div>
+              </div>
+              <span
+                className="text-[11px] font-extrabold px-2.5 py-1 rounded-full flex-shrink-0"
+                style={{ backgroundColor: 'rgba(146,64,14,0.12)', color: '#92400e' }}
+              >
+                Unpaid
+              </span>
+            </div>
+            <div className="px-5 py-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+              <div className="min-w-0">
+                <p className="text-xs font-bold uppercase tracking-wide text-slate-400">Order</p>
+                <p className="text-sm font-extrabold text-slate-900 truncate">{incompleteBundleName}</p>
+                {incompleteAmount != null && (
+                  <p className="text-sm font-bold mt-0.5" style={{ color: '#112116' }}>
+                    {incompleteCurrency} {Number(incompleteAmount).toFixed(2)}
+                  </p>
+                )}
+                {incompleteOrderId != null && (
+                  <p className="text-xs text-slate-400 mt-1">Order #{incompleteOrderId}</p>
+                )}
+                {retryPayError && (
+                  <p className="text-xs font-medium text-red-600 mt-2">{retryPayError}</p>
+                )}
+              </div>
+              <div className="flex flex-col sm:flex-row gap-2 w-full sm:w-auto">
+                <button
+                  type="button"
+                  onClick={() => void handleRetryPayment()}
+                  disabled={retryPaying}
+                  className="inline-flex items-center justify-center gap-2 px-4 py-3 rounded-xl text-sm font-bold text-white hover:opacity-90 disabled:opacity-60"
+                  style={{ backgroundColor: '#112116' }}
+                >
+                  {retryPaying ? (
+                    <>
+                      <Loader2 size={16} className="animate-spin" /> Opening payment…
+                    </>
+                  ) : (
+                    <>
+                      <CreditCard size={16} /> Complete payment
+                    </>
+                  )}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void loadOrders()}
+                  className="inline-flex items-center justify-center gap-2 px-4 py-3 rounded-xl text-sm font-bold border border-slate-200 text-slate-700 hover:bg-slate-50"
+                >
+                  Refresh status
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {showReceiptPrompt && !needsPaymentRetry && (
           <div className="rounded-2xl border border-slate-200 bg-white overflow-hidden shadow-sm">
             <div
               className="px-5 py-4 flex items-start justify-between gap-3"
@@ -1675,7 +1920,7 @@ export default function DashboardPage() {
           </div>
         )}
 
-        {assignmentLoading && !hasActiveEsim && !waitingForSim && !hasPurchasedPlan && !isPhysicalSimAwaitingPickup ? (
+        {assignmentLoading && !hasActiveEsim && !waitingForSim && !hasPurchasedPlan && !isPhysicalSimAwaitingPickup && !needsPaymentRetry ? (
           <div className="rounded-2xl p-12 flex items-center justify-center bg-white border border-slate-100">
             <Loader2 size={28} className="animate-spin text-slate-400" />
           </div>
@@ -2120,7 +2365,7 @@ export default function DashboardPage() {
               </>
             )}
           </>
-        ) : isPhysicalSimAwaitingPickup ? null : (
+        ) : isPhysicalSimAwaitingPickup || needsPaymentRetry ? null : (
           /* Empty state */
           <div className="bg-white rounded-2xl border border-slate-100 p-10 text-center">
             <div

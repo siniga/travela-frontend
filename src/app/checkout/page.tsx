@@ -619,11 +619,13 @@ export default function CheckoutPage() {
     emailOverride?: string;
     orderId?: string | number;
     draftId?: string;
+    paymentUrl?: string | null;
   }) => {
     const payEmail = (opts.emailOverride ?? email).trim();
     const snapshot = {
       order_id: opts.orderId,
       draft_id: opts.draftId ?? orderDraftId,
+      payment_url: opts.paymentUrl ?? undefined,
       items: [{ bundle: cart.bundle, quantity: 1 }],
       trip: {
         countryName: cart.countryName,
@@ -635,6 +637,8 @@ export default function CheckoutPage() {
             : undefined,
       },
       simType: cart.simType,
+      country: cart.country,
+      countryName: cart.countryName,
       total,
       currency,
       email: payEmail,
@@ -790,14 +794,15 @@ export default function CheckoutPage() {
         draftId,
       });
 
-      savePendingPayment({ orderId, draftId });
+      savePendingPayment({ orderId, draftId, paymentUrl });
 
-      if (cart && (isTopUpFlow || cart.simType === 'esim')) {
+      // Only optimistic-poll after top-up (existing SIM). New purchases wait until payment is confirmed.
+      if (cart && isTopUpFlow) {
         const purchasedDataMb = Number(cart.bundle.data_mb) || 0;
         startBalancePoll({
           msisdn: cart.msisdn,
           purchasedDataMb,
-          currentDataMb: isTopUpFlow ? cart.current_data_mb : 0,
+          currentDataMb: cart.current_data_mb,
         });
       }
 
