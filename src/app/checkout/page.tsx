@@ -314,6 +314,28 @@ export default function CheckoutPage() {
   }, [step, isTopUpFlow, router]);
 
   useEffect(() => {
+    const pinToTop = () => {
+      const active = document.activeElement;
+      if (active instanceof HTMLElement) active.blur();
+      const root = document.documentElement;
+      const previous = root.style.scrollBehavior;
+      root.style.scrollBehavior = 'auto';
+      window.scrollTo(0, 0);
+      root.style.scrollBehavior = previous;
+    };
+
+    pinToTop();
+    const frame = requestAnimationFrame(() => {
+      requestAnimationFrame(pinToTop);
+    });
+    const timer = window.setTimeout(pinToTop, 50);
+    return () => {
+      cancelAnimationFrame(frame);
+      window.clearTimeout(timer);
+    };
+  }, [step]);
+
+  useEffect(() => {
     if (step !== 'otp') return;
     const tick = () => {
       const msLeft = Math.max(0, resendCooldownEndsAt - Date.now());

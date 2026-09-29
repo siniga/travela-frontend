@@ -1181,14 +1181,6 @@ export default function DashboardPage() {
     optimisticDataMb ??
     purchasedPlanMb;
 
-  const balanceStatusSub = confirmedDataMb != null || carrierDataMb != null
-    ? 'Live data remaining'
-    : balancePolling || waitingForSim
-      ? 'Confirming with the network'
-      : purchasedPlanMb != null
-        ? 'Purchased data'
-        : 'Waiting for data balance';
-
   const simType = primaryUserEsim?.esim?.sim_type ?? assignedSim?.esim?.sim_type ?? purchase?.simType ?? pendingPayment?.simType ?? 'esim';
   const isEsimType = simType.toLowerCase() !== 'physical';
   const simStatus = primaryUserEsim?.esim?.status ?? assignedSim?.esim?.status ?? null;
@@ -1226,6 +1218,22 @@ export default function DashboardPage() {
     ) ??
     null;
   const receiptOrderPaid = matchedReceiptOrder ? isPaidOrder(matchedReceiptOrder) : false;
+  const paymentPending =
+    !receiptOrderPaid && (showReceiptPrompt || pendingPayment != null);
+  const showEsimSetup =
+    waitingForSim && receiptOrderPaid && !hasActiveEsim && !isPhysicalSimAwaitingPickup;
+  const planStatusLabel =
+    paymentPending && !hasActiveEsim ? 'Payment pending' : simStatusDisplay;
+  const balanceStatusLabel =
+    confirmedDataMb != null || carrierDataMb != null
+      ? 'Live data remaining'
+      : paymentPending
+        ? 'Payment pending'
+        : receiptOrderPaid && (balancePolling || waitingForSim)
+          ? 'Confirming with the network'
+          : purchasedPlanMb != null
+            ? 'Purchased data'
+            : 'Waiting for data balance';
   const receiptBundleName =
     matchedReceiptOrder?.order_items?.[0]?.bundle_name ??
     pendingPayment?.items?.[0]?.bundle?.name ??
@@ -1356,7 +1364,14 @@ export default function DashboardPage() {
         </div>
       </div>
 
-      {balancePolling ? (
+      {paymentPending ? (
+        <div className="bg-amber-50 border-b border-amber-100 px-4 py-3">
+          <p className="max-w-5xl mx-auto text-sm text-amber-900 flex items-center gap-2">
+            <Clock size={16} className="shrink-0" />
+            Payment is pending. Finish payment in the other tab, or try again if it failed. Your eSIM is set up only after payment goes through.
+          </p>
+        </div>
+      ) : balancePolling && receiptOrderPaid ? (
         <div className="bg-emerald-50 border-b border-emerald-100 px-4 py-3">
           <p className="max-w-5xl mx-auto text-sm text-emerald-800 flex items-center gap-2">
             <Loader2 size={16} className="shrink-0 animate-spin" />
@@ -1473,12 +1488,12 @@ export default function DashboardPage() {
                 </div>
                 <div className="min-w-0">
                   <p className="text-sm font-extrabold text-slate-900">
-                    {receiptOrderPaid ? 'Payment received' : 'After you finish payment'}
+                    {receiptOrderPaid ? 'Payment received' : 'Payment is pending'}
                   </p>
                   <p className="text-xs text-slate-600 mt-0.5 leading-relaxed">
                     {receiptOrderPaid
                       ? 'Download your Travela receipt with plan and payment details.'
-                      : 'Complete payment in the other tab, then come back here. You can download your Travela receipt once payment is confirmed.'}
+                      : 'Payment has not been confirmed yet. Finish it in the other tab, or try again if it failed. You can download your Travela receipt once payment goes through.'}
                   </p>
                 </div>
               </div>
@@ -1523,7 +1538,7 @@ export default function DashboardPage() {
           </div>
         )}
 
-        {waitingForSim && !hasActiveEsim && !isPhysicalSimAwaitingPickup && (
+        {showEsimSetup && (
           <div className="rounded-xl border border-sky-200 bg-sky-50 px-4 py-4 flex items-start gap-3">
             <Loader2 size={20} className="animate-spin text-sky-600 flex-shrink-0 mt-0.5" />
             <div>
@@ -1779,7 +1794,7 @@ export default function DashboardPage() {
                       : { backgroundColor: 'rgba(255,255,255,0.15)', color: 'rgba(255,255,255,0.8)' }
                   }
                 >
-                  {simStatusDisplay}
+                  {planStatusLabel}
                 </span>
               </div>
 
@@ -1942,7 +1957,7 @@ export default function DashboardPage() {
                   icon: <Globe size={16} style={{ color: '#17cf54' }} />,
                   label: 'Balance',
                   value: balanceAreaValue,
-                  sub: balanceStatusSub,
+                  sub: balanceStatusLabel,
                 },
                 {
                   icon: <Clock size={16} style={{ color: '#17cf54' }} />,
