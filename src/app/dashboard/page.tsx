@@ -15,6 +15,7 @@ import { useAuth } from '@/lib/auth-context';
 import { getBalancePollContext } from '@/lib/balance-poll';
 import { displayBundleName } from '@/lib/bundles';
 import { dataMbFromAssignment } from '@/lib/esim-balance';
+import { extractPaymentUrl, normalizePaymentUrl } from '@/lib/payment';
 import { useBalancePoll } from '@/hooks/useBalancePoll';
 import {
   CheckCircle,
@@ -68,6 +69,7 @@ interface PendingPaymentData {
   total?: number;
   currency?: string;
   email?: string;
+  payment_url?: string;
 }
 
 interface OrderItemRecord {
@@ -89,6 +91,11 @@ interface OrderRecord {
   currency: string;
   paid_at: string | null;
   created_at: string;
+  payment_payload?: {
+    response?: {
+      paymentUrl?: string | null;
+    };
+  } | null;
   metadata?: {
     countryName?: string;
     simType?: string;
@@ -483,6 +490,28 @@ function isPaidOrder(order: OrderRecord): boolean {
   return status === 'paid' || status === 'completed';
 }
 
+function checkoutUrlFromOrder(order: OrderRecord | null | undefined): string | null {
+  const payload = order?.payment_payload;
+  if (!payload || typeof payload !== 'object') return null;
+  const record = payload as Record<string, unknown>;
+  const response =
+    record.response && typeof record.response === 'object'
+      ? (record.response as Record<string, unknown>)
+      : null;
+  const candidates = [
+    response?.paymentUrl,
+    response?.payment_url,
+    response?.checkout_url,
+    record.paymentUrl,
+    record.payment_url,
+    record.checkout_url,
+  ];
+  for (const value of candidates) {
+    if (typeof value === 'string' && value.trim()) return value.trim();
+  }
+  return null;
+}
+
 function formatOrderItemData(mb?: number | null) {
   if (mb == null || mb <= 0) return '—';
   return mb >= 1024 ? `${(mb / 1024).toFixed(0)} GB` : `${mb} MB`;
@@ -632,6 +661,9 @@ export default function DashboardPage() {
   const [topUpBundlesLoading, setTopUpBundlesLoading] = useState(false);
   const [showReceiptPrompt, setShowReceiptPrompt] = useState(false);
   const [receiptOrderId, setReceiptOrderId] = useState<string | null>(null);
+  const [openingPayment, setOpeningPayment] = useState(false);
+  const [paymentOpenError, setPaymentOpenError] = useState('');
+  const [resolvedCheckoutUrl, setResolvedCheckoutUrl] = useState<string | null>(null);
   const ordersRef = useRef(orders);
   const purchaseRef = useRef(purchase);
 
@@ -942,6 +974,70 @@ export default function DashboardPage() {
   useEffect(() => {
     if (!isAuthenticated) return;
 
+    const matched =
+      orders.find((order) => receiptOrderId && String(order.id) === String(receiptOrderId)) ??
+      orders.find(
+        (order) =>
+          pendingPayment?.order_id != null && String(order.id) === String(pendingPayment.order_id)
+      ) ??
+      null;
+    const paid = matched ? isPaidOrder(matched) : false;
+    const pending = !paid && (showReceiptPrompt || pendingPayment != null);
+    if (!pending) {
+      setResolvedCheckoutUrl(null);
+      setOpeningPayment(false);
+      return;
+    }
+
+    const known = normalizePaymentUrl(
+      pendingPayment?.payment_url ?? checkoutUrlFromOrder(matched ?? orders.find((order) => !isPaidOrder(order)))
+    );
+    if (known) {
+      setResolvedCheckoutUrl(known);
+      setPaymentOpenError('');
+      setOpeningPayment(false);
+      return;
+    }
+
+    const orderId =
+      pendingPayment?.order_id ??
+      (receiptOrderId || null) ??
+      matched?.id ??
+      orders.find((order) => !isPaidOrder(order))?.id ??
+      null;
+    if (orderId == null) return;
+
+    let cancelled = false;
+    setOpeningPayment(true);
+    setPaymentOpenError('');
+
+    void (async () => {
+      try {
+        const res = await OrderApi.evpayCheckoutUrl(orderId);
+        const url = normalizePaymentUrl(extractPaymentUrl(res.body));
+        if (cancelled) return;
+        if (!res.ok || !url) {
+          setPaymentOpenError(apiErrorMessage(res.body, 'Could not open the payment page.'));
+          return;
+        }
+        setResolvedCheckoutUrl(url);
+      } catch (e: unknown) {
+        if (!cancelled) {
+          setPaymentOpenError(e instanceof Error ? e.message : 'Could not open the payment page.');
+        }
+      } finally {
+        if (!cancelled) setOpeningPayment(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isAuthenticated, showReceiptPrompt, pendingPayment, receiptOrderId, orders]);
+
+  useEffect(() => {
+    if (!isAuthenticated) return;
+
     const refreshEsims = () => void loadEsims();
     window.addEventListener('focus', refreshEsims);
     window.addEventListener('pageshow', refreshEsims);
@@ -1197,6 +1293,13 @@ export default function DashboardPage() {
   const receiptOrderPaid = matchedReceiptOrder ? isPaidOrder(matchedReceiptOrder) : false;
   const paymentPending =
     !receiptOrderPaid && (showReceiptPrompt || pendingPayment != null);
+  const pendingOrder =
+    matchedReceiptOrder ??
+    orders.find((order) => !isPaidOrder(order)) ??
+    null;
+  const pendingCheckoutUrl = paymentPending
+    ? normalizePaymentUrl(pendingPayment?.payment_url ?? checkoutUrlFromOrder(pendingOrder))
+    : null;
   const showEsimSetup =
     waitingForSim && receiptOrderPaid && !hasActiveEsim && !isPhysicalSimAwaitingPickup;
   const planStatusLabel =
@@ -1294,6 +1397,8 @@ export default function DashboardPage() {
         ? 0
         : Math.min(100, Math.max(4, Math.round((remainingMb / bundleTotalMb) * 100)));
 
+  const checkoutHref = pendingCheckoutUrl || resolvedCheckoutUrl;
+
   return (
     <div className="min-h-screen" style={{ backgroundColor: '#f6f8f6' }}>
       {assignPrompt && (
@@ -1343,10 +1448,27 @@ export default function DashboardPage() {
 
       {paymentPending ? (
         <div className="bg-amber-50 border-b border-amber-100 px-4 py-3">
-          <p className="max-w-5xl mx-auto text-sm text-amber-900 flex items-center gap-2">
-            <Clock size={16} className="shrink-0" />
-            Payment is pending. Finish payment in the other tab, or try again if it failed. Your eSIM is set up only after payment goes through.
-          </p>
+          <div className="max-w-5xl mx-auto flex flex-wrap items-center gap-3">
+            <p className="text-sm text-amber-900 flex items-center gap-2">
+              <Clock size={16} className="shrink-0" />
+              Payment is pending. Finish payment in the other tab, or try again if it failed. Your eSIM is set up only after payment goes through.
+            </p>
+            {checkoutHref ? (
+              <a
+                href={checkoutHref}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-sm font-semibold text-amber-950 underline underline-offset-2 hover:text-amber-800"
+              >
+                Continue to payment
+              </a>
+            ) : openingPayment ? (
+              <span className="text-sm text-amber-800">Loading payment link…</span>
+            ) : null}
+            {paymentOpenError ? (
+              <p className="w-full text-xs font-semibold text-amber-950">{paymentOpenError}</p>
+            ) : null}
+          </div>
         </div>
       ) : balancePolling && receiptOrderPaid ? (
         <div className="bg-emerald-50 border-b border-emerald-100 px-4 py-3">

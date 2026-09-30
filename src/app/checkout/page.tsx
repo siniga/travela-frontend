@@ -645,6 +645,7 @@ export default function CheckoutPage() {
     emailOverride?: string;
     orderId?: string | number;
     draftId?: string;
+    paymentUrl?: string;
   }) => {
     const payEmail = (opts.emailOverride ?? email).trim();
     const snapshot = {
@@ -664,6 +665,7 @@ export default function CheckoutPage() {
       total,
       currency,
       email: payEmail,
+      payment_url: opts.paymentUrl,
       createdAt: new Date().toISOString(),
     };
     localStorage.setItem('pendingPayment', JSON.stringify(snapshot));
@@ -816,7 +818,7 @@ export default function CheckoutPage() {
         draftId,
       });
 
-      savePendingPayment({ orderId, draftId });
+      savePendingPayment({ orderId, draftId, paymentUrl: targetUrl });
 
       if (cart && (isTopUpFlow || cart.simType === 'esim')) {
         startBalancePoll({ msisdn: cart.msisdn });
