@@ -18,7 +18,7 @@ import {
 } from 'lucide-react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { useEffect, useState } from 'react';
+import { useEffect, useLayoutEffect, useState } from 'react';
 import LegalAcceptance from '@/components/legal/LegalAcceptance';
 import { AuthApi, extractAuthTokenFromBody, OrderApi } from '@/lib/api';
 import { AUTH_STORAGE_SYNC } from '@/lib/auth-context';
@@ -313,27 +313,50 @@ export default function CheckoutPage() {
     }
   }, [step, isTopUpFlow, router]);
 
-  useEffect(() => {
+  const cartReady = cart !== null;
+
+  // Keep the document from restoring or anchoring a previous scroll offset
+  // while any checkout step is on screen.
+  useLayoutEffect(() => {
+    const previousRestoration = history.scrollRestoration;
+    history.scrollRestoration = 'manual';
+    const root = document.documentElement;
+    const previousAnchor = root.style.overflowAnchor;
+    root.style.overflowAnchor = 'none';
+    return () => {
+      history.scrollRestoration = previousRestoration;
+      root.style.overflowAnchor = previousAnchor;
+    };
+  }, []);
+
+  // Every step starts at the top, including when the previous step was
+  // scrolled to the bottom. Follow-up pins beat scroll anchoring after paint.
+  useLayoutEffect(() => {
     const pinToTop = () => {
       const active = document.activeElement;
-      if (active instanceof HTMLElement) active.blur();
+      if (active instanceof HTMLElement && active !== document.body) active.blur();
       const root = document.documentElement;
       const previous = root.style.scrollBehavior;
       root.style.scrollBehavior = 'auto';
       window.scrollTo(0, 0);
+      root.scrollTop = 0;
+      document.body.scrollTop = 0;
       root.style.scrollBehavior = previous;
     };
 
     pinToTop();
+    let innerFrame = 0;
     const frame = requestAnimationFrame(() => {
-      requestAnimationFrame(pinToTop);
+      innerFrame = requestAnimationFrame(pinToTop);
     });
-    const timer = window.setTimeout(pinToTop, 50);
+    const timers = [50, 150, 400].map((ms) => window.setTimeout(pinToTop, ms));
+
     return () => {
       cancelAnimationFrame(frame);
-      window.clearTimeout(timer);
+      cancelAnimationFrame(innerFrame);
+      for (const id of timers) window.clearTimeout(id);
     };
-  }, [step]);
+  }, [step, cartReady]);
 
   useEffect(() => {
     if (step !== 'otp') return;
