@@ -27,7 +27,7 @@ import {
   normalizePaymentUrl,
   resolvePaymentTargetUrl,
 } from '@/lib/payment';
-import { startBalancePoll } from '@/lib/balance-poll';
+import { clearBalancePoll, startBalancePoll } from '@/lib/balance-poll';
 
 interface CartBundle {
   id: string | number;
@@ -473,6 +473,10 @@ export default function CheckoutPage() {
         return;
       }
 
+      clearBalancePoll();
+      localStorage.removeItem('lastPurchase');
+      localStorage.removeItem('pendingPayment');
+
       const token = extractAuthTokenFromBody(result.body);
       if (token) localStorage.setItem('token', token);
 
@@ -815,12 +819,7 @@ export default function CheckoutPage() {
       savePendingPayment({ orderId, draftId });
 
       if (cart && (isTopUpFlow || cart.simType === 'esim')) {
-        const purchasedDataMb = Number(cart.bundle.data_mb) || 0;
-        startBalancePoll({
-          msisdn: cart.msisdn,
-          purchasedDataMb,
-          currentDataMb: isTopUpFlow ? cart.current_data_mb : 0,
-        });
+        startBalancePoll({ msisdn: cart.msisdn });
       }
 
       openPaymentInNewTab(targetUrl, paymentTab);

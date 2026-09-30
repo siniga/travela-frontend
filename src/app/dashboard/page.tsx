@@ -12,7 +12,7 @@ import {
   type EsimAssignmentStatus,
 } from '@/lib/api';
 import { useAuth } from '@/lib/auth-context';
-import { getBalancePollContext, getOptimisticDataMb } from '@/lib/balance-poll';
+import { getBalancePollContext } from '@/lib/balance-poll';
 import { displayBundleName } from '@/lib/bundles';
 import { dataMbFromAssignment } from '@/lib/esim-balance';
 import { useBalancePoll } from '@/hooks/useBalancePoll';
@@ -471,22 +471,6 @@ function readLastPurchaseFromStorage(): PurchaseData | null {
   }
 }
 
-function purchaseFromPurchasedMb(mb: number): PurchaseData {
-  return {
-    items: [
-      {
-        bundle: {
-          name: fallbackBundleName(mb) ?? `${formatMb(mb)} eSIM`,
-          data_mb: mb,
-          validity_days: 30,
-        },
-        quantity: 1,
-      },
-    ],
-    simType: 'esim',
-  };
-}
-
 function parseOrdersFromBody(body: unknown): OrderRecord[] {
   if (!body || typeof body !== 'object') return [];
   const b = body as { data?: unknown };
@@ -717,7 +701,7 @@ export default function DashboardPage() {
   const loadEsimsRef = useRef(loadEsims);
   loadEsimsRef.current = loadEsims;
 
-  const { isPolling: balancePolling, confirmedDataMb, optimisticDataMb } = useBalancePoll({
+  const { isPolling: balancePolling, confirmedDataMb } = useBalancePoll({
     onBalanceReady: () => {
       void loadEsimsRef.current();
     },
@@ -877,8 +861,7 @@ export default function DashboardPage() {
       const simType =
         activeEsim?.esim?.sim_type === 'physical' ? 'physical' : 'esim';
 
-      const currentDataMb =
-        getOptimisticDataMb() ?? dataMbFromAssignment(activeEsim) ?? 0;
+      const currentDataMb = dataMbFromAssignment(activeEsim);
 
       localStorage.setItem(
         'cart',
@@ -890,7 +873,7 @@ export default function DashboardPage() {
           checkoutMode: 'topup',
           user_esim_id: activeEsim.id,
           msisdn,
-          current_data_mb: currentDataMb,
+          ...(currentDataMb != null ? { current_data_mb: currentDataMb } : {}),
         })
       );
       sessionStorage.setItem(CHECKOUT_TRANSITION_KEY, 'topup-modal');
@@ -924,8 +907,6 @@ export default function DashboardPage() {
         draftId: pending.draft_id,
         simType: pending.simType,
       });
-    } else if (optimisticDataMb != null && optimisticDataMb > 0) {
-      setPurchase((current) => current ?? purchaseFromPurchasedMb(optimisticDataMb));
     }
     try {
       if (sessionStorage.getItem('travela:showReceiptPrompt') === '1') {
@@ -935,7 +916,7 @@ export default function DashboardPage() {
     } catch {
       /* ignore */
     }
-  }, [isAuthenticated, optimisticDataMb]);
+  }, [isAuthenticated]);
 
   useEffect(() => {
     if (!showReceiptPrompt || !pendingPayment?.order_id) return;
@@ -955,7 +936,8 @@ export default function DashboardPage() {
   useEffect(() => {
     if (!isAuthenticated) return;
     void loadOrders();
-  }, [isAuthenticated, loadOrders]);
+    void loadEsims();
+  }, [isAuthenticated, loadOrders, loadEsims]);
 
   useEffect(() => {
     if (!isAuthenticated) return;
@@ -1175,11 +1157,7 @@ export default function DashboardPage() {
     coerceNumber(latestPaidOrder?.order_items?.[0]?.data_amount) ??
     coerceNumber(apiBundle?.data_mb) ??
     null;
-  const displayDataMb =
-    confirmedDataMb ??
-    carrierDataMb ??
-    optimisticDataMb ??
-    purchasedPlanMb;
+  const displayDataMb = confirmedDataMb ?? carrierDataMb ?? purchasedPlanMb;
 
   const simType = primaryUserEsim?.esim?.sim_type ?? assignedSim?.esim?.sim_type ?? purchase?.simType ?? pendingPayment?.simType ?? 'esim';
   const isEsimType = simType.toLowerCase() !== 'physical';
@@ -1191,7 +1169,6 @@ export default function DashboardPage() {
     Boolean(assignedMsisdn) || userEsims.length > 0;
   const hasPurchasedPlan =
     hasActiveEsim ||
-    Boolean(optimisticDataMb != null && optimisticDataMb > 0) ||
     Boolean(pendingPayment && pendingPayment.simType !== 'physical') ||
     Boolean(purchase && purchase.simType !== 'physical') ||
     Boolean(latestPaidOrder && latestPaidOrder.metadata?.simType !== 'physical');

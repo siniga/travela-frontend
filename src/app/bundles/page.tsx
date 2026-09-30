@@ -6,7 +6,6 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { Suspense, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { BundlesApi, EsimsApi } from '@/lib/api';
 import { useAuth } from '@/lib/auth-context';
-import { getOptimisticDataMb } from '@/lib/balance-poll';
 import {
   type Bundle,
   type BundlesResponse,
@@ -160,8 +159,8 @@ function BundlesContent() {
           window.alert('No SIM found on your account. Complete your first purchase first.');
           return;
         }
-        current_data_mb =
-          getOptimisticDataMb() ?? dataMbFromAssignment(first) ?? 0;
+        const liveDataMb = dataMbFromAssignment(first);
+        if (liveDataMb != null) current_data_mb = liveDataMb;
       } catch {
         window.alert('Could not load your SIM. Try again from the dashboard.');
         return;
@@ -176,6 +175,7 @@ function BundlesContent() {
         countryName,
         simType,
         checkoutMode,
+        ...(user_esim_id != null ? { user_esim_id, msisdn, current_data_mb } : {}),
       })
     );
     router.push('/checkout');
